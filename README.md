@@ -1,3 +1,4 @@
+```
 Notifishower 0.1.0
 
 This is a simple program to display a combinations of text and images as a
@@ -124,4 +125,4 @@ Managing notifications:
   "killall notifishower" shortcut to your window manager. It also doesn't
   support getting notifications from freedesktop, for that you might want to
   have a look at notificatcher.
-
+```
