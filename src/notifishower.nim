@@ -1,5 +1,6 @@
-import docopt
-import strutils, sequtils, tables
+#import docopt
+import os, tables
+import layout, options, ninepatch
 import imlib2
 import x11 / [x, xlib, xutil, xatom, xrandr]
 
@@ -43,10 +44,28 @@ converter pintToPcint(x: ptr int): ptr cint = cast[ptr cint](x)
 converter boolToXBool(x: bool): XBool = x.XBool
 converter xboolToBool(x: XBool): bool = x.bool
 
-import os
-echo commandLineParams()
-let args = docopt(doc, version = "Notifishower 0.1.0")
-echo args
+#echo commandLineParams()
+#let args = docopt(doc, version = "Notifishower 0.1.0")
+#echo args
+
+var args: Options
+args.background = Color(r: 68, g: 68, b: 68, a: 255)
+args.border = Color(r: 128, g: 128, b: 128, a: 255)
+args.borderWidth = 2
+args.x = 49
+args.y = 0
+args.w = -98
+args.h = 0
+args.hopt = ">="
+args.defaultFont = "DejaVuSans/10"
+args.format = "(-[~icon:32~]-[~title body~]-)"
+args.text["title"] = Text(font: "DejaVuSans/12", color: Color(r: 255, g: 255, b: 255, a: 255))
+args.text["body"] = Text(color: Color(r: 255, g: 255, b: 255, a: 255))
+args.images["icon"] = Image()
+args = parseCommandLine(defaults = args)
+for _, text in args.text.mpairs:
+  if text.font.len == 0:
+    text.font = args.defaultFont
 
 var
   disp: PDisplay
@@ -54,11 +73,11 @@ var
   cm: Colormap
   depth: int
   ev: XEvent
-  font: ImlibFont
   #mouseX, mouseY: int
-  windows: Table[Window, tuple[w, h: int, updates: ImlibUpdates]]
+  windows: Table[Window, tuple[w, h: int, updates: ImlibUpdates, layout: Pack]]
   vinfo: XVisualInfo
-  background: tuple[r, g, b, a: int]
+  background: Color
+  bgNinepatch: Ninepatch
 
 type
   Screen = object
@@ -144,22 +163,13 @@ discard XMatchVisualInfo(disp, DefaultScreen(disp), 32, TrueColor, vinfo.addr) =
         XMatchVisualInfo(disp, DefaultScreen(disp), 16, DirectColor, vinfo.addr) == 1 or
         XMatchVisualInfo(disp, DefaultScreen(disp), 8, PseudoColor, vinfo.addr) == 1
 
-var bgColor = $args["--background"]
-if bgColor != "nil":
-  let s = if bgColor[0..1].toLower == "0x": 2 else: 0
-  background.r = parseHexInt(bgColor[s..s+1])
-  background.g = parseHexInt(bgColor[s+2..s+3])
-  background.b = parseHexInt(bgColor[s+4..s+5])
-  background.a = 255
-  if bgColor.len > 6:
-    background.a = parseHexInt(bgColor[s+6..s+7])
+background = args.background
 
 var wa: XSetWindowAttributes
 wa.overrideRedirect = true
 wa.backgroundPixmap = None
-wa.backgroundPixel = if $args["--background"] != "nil": parseHexInt($args["--background"]).uint else: 0
-wa.borderPixel = if $args["--border"] != "nil": parseHexInt($args["--border"]).uint else: 0
-#wa.colormap = XCreateColormap(disp, DefaultRootWindow(disp), vis, AllocNone)
+wa.backgroundPixel = 0
+wa.borderPixel = ((args.border.a shl 24) or (args.border.r shl 16) or (args.border.g shl 8) or args.border.b).uint
 wa.colormap = XCreateColormap(disp, DefaultRootWindow(disp), vinfo.visual, AllocNone)
 wa.eventMask =
     ExposureMask or KeyPressMask or VisibilityChangeMask or
@@ -182,56 +192,72 @@ imlib_context_set_display(disp)
 imlib_context_set_visual(vinfo.visual)
 imlib_context_set_colormap(wa.colormap)
 
-font = imlib_load_font(if $args["--font"] != "nil": $args["--font"] else: "DejaVuSans/20")
-imlib_context_set_font(font);
-imlib_context_set_color(255, 0, 0, 255);
-#var text = $args["<message>"]
-#var textW, textH: int
-#imlib_get_text_size(text[0].addr, textW.addr, textH.addr)
-#imlib_free_font()
-#echo (textW: textW, textH: textH)
+if args.ninepatch.len != 0:
+  bgNinepatch = imlib_load_ninepatch(args.ninepatch)
+  if bgNinepatch.image == args.ninepatch:
+    bgNinepatch.tile = args.ninepatchTile
+    let
+      dx = bgNinepatch.startDx
+      dy = bgNinepatch.startDy
+      dw = bgNinepatch.dwidth
+      dh = bgNinepatch.dheight
+    args.format = "(-" & $dx & "-[-" & $dy & "-" & args.format & "-" & $dh & "-]-" & $ $dw & "-)"
 
-let
-  width = if $args["--width"] != "nil": parseInt($args["--width"]) else: 200
-  height = if $args["--height"] != "nil": parseInt($args["--height"]) else: 100
-  wneg = ($args["--width"])[0] == '-'
-  hneg = ($args["--height"])[0] == '-'
+var texts, images: Table[string, tuple[w, h: int]]
+for name, text in args.text:
+  var loadedFont = imlib_load_font(text.font)
+  texts[name] = (1, 1)
+  imlib_context_set_font(loadedFont)
+  if text.text.len > 0:
+    imlib_get_text_size(text.text[0].unsafeAddr, texts[name].w.addr, texts[name].h.addr)
+  imlib_free_font()
+
+for name, image in args.images:
+  if image.image.len > 0:
+    var image = imlib_load_image(image.image)
+    if image == nil:
+      args.images[name].image = ""
+      images[name] = (1, 1)
+    else:
+      imlib_context_set_image(image)
+      images[name] = (imlib_image_get_width().int, imlib_image_get_height().int)
+      imlib_free_image()
+  else:
+    images[name] = (1, 1)
 
 for screen in screens:
-  let
-    monitors = args["--monitor"].mapIt($it)
-    monitorPos = monitors.find(screen.name)
-    # TODO: Detect active monitor and allow a follow active mode
-  if args["--monitor"].len == 0 or monitorPos > -1:
+  # TODO: Detect active monitor and allow a follow active mode
+  if args.monitors.len == 0 or args.monitors.hasKey(screen.name):
     let
-      borderWidth = parseInt($args["--borderWidth"])
+      borderWidth = args.borderWidth
       xinput =
-        if args["--monitor"].len == 0 and $args["-x"] != "nil": parseInt($args["-x"])
-        elif monitorPos > -1: parseInt($(args["-x"][monitorPos]))
-        else: 0
+        if args.monitors.hasKey(screen.name) and args.monitors[screen.name].x != int.high:
+          args.monitors[screen.name].x
+        else: args.x
       yinput =
-        if (args["--monitor"].len == 0 and $args["-y"] != "nil"): parseInt($args["-y"])
-        elif monitorPos > -1: parseInt($(args["-y"][monitorPos]))
-        else: 0
-      xneg =
-        if args["--monitor"].len == 0: ($args["-x"])[0] == '-'
-        elif monitorPos > -1: ($(args["-x"][monitorPos]))[0] == '-'
-        else: false
-      yneg =
-        if args["--monitor"].len == 0: ($args["-y"])[0] == '-'
-        elif monitorPos > -1: ($(args["-y"][monitorPos]))[0] == '-'
-        else: false
-      winWidth = if wneg: screen.w + width else: width
-      winHeight = if hneg: screen.h + height else: height
-      xpos = screen.x + (if xneg: screen.w - winWidth - borderWidth*2 + xinput else: xinput)
-      ypos = screen.y + (if yneg: screen.h - winHeight - borderWidth*2 + yinput else: yinput)
+        if args.monitors.hasKey(screen.name) and args.monitors[screen.name].y != int.high:
+          args.monitors[screen.name].y
+        else: args.y
+      width =
+        if args.monitors.hasKey(screen.name) and args.monitors[screen.name].w != int.high:
+          args.monitors[screen.name].w
+        else: args.w
+      height =
+        if args.monitors.hasKey(screen.name) and args.monitors[screen.name].h != int.high:
+          args.monitors[screen.name].h
+        else: args.h
+      winWidth = if width < 0: screen.w + width else: width
+      winHeight = if height < 0: screen.h + height else: height
+      layout = parseLayout(args.format, (args.wopt, winWidth), (args.hopt, winHeight), texts, images)
+      xpos = screen.x + (if xinput < 0: screen.w - layout.width.value.int - borderWidth*2 + xinput + 1 else: xinput)
+      ypos = screen.y + (if yinput < 0: screen.h - layout.height.value.int - borderWidth*2 + yinput + 1 else: yinput)
+      win = XCreateWindow(disp, DefaultRootWindow(disp), xpos, ypos, layout.width.value.int,
+        layout.height.value.int, borderWidth, vinfo.depth, InputOutput, vinfo.visual,
+        CWOverrideRedirect or CWBackPixmap or CWBackPixel or CWBorderPixel or
+        CWColormap or CWEventMask, wa.addr)
+    windows[win] = (w: layout.width.value.int, h: layout.height.value.int, updates: nil, layout: layout)
+    #echo layout
 
-    let win = XCreateWindow(disp, DefaultRootWindow(disp), xpos, ypos, winWidth,
-      winHeight, borderWidth, vinfo.depth, InputOutput, vinfo.visual,
-      CWOverrideRedirect or CWBackPixmap or CWBackPixel or CWBorderPixel or
-      CWColormap or CWEventMask, wa.addr)
-    echo win
-    windows[win] = (w: winWidth, h: winHeight, updates: nil)
     # tell X what events we are interested in
     discard XSelectInput(disp, win, ButtonPressMask or ButtonReleaseMask or
                 PointerMotionMask or ExposureMask);
@@ -240,8 +266,8 @@ for screen in screens:
 
     # set window title and class
     var
-      title = $args["--name"]
-      classhint = XClassHint(resName: $args["--class"], resClass: "Notishower")
+      title = if args.name.len == 0: "notifishower" else: args.name
+      classhint = XClassHint(resName: if args.class.len == 0: "notifishower" else: args.class, resClass: "Notishower")
     discard XStoreName(disp, win, title)
     discard XChangeProperty(disp, win, XInternAtom(disp, "_NET_WM_NAME", false),
       XInternAtom(disp, "UTF8_STRING", false), 8, PropModeReplace, title[0].addr,
@@ -264,7 +290,6 @@ for screen in screens:
     discard XChangeProperty(disp, win, netWmState, XA_ATOM, 32,
             PropModeReplace, cast[ptr cuchar](data.addr), 1)
 
-echo windows
 
 template doWhile(condition, action: untyped): untyped =
   action
@@ -294,36 +319,55 @@ while true:
       imlib_updates_get_coordinates(currentUpdate,
                                     up_x.addr, up_y.addr, up_w.addr, up_h.addr);
 
-      echo (win: win, upX: upX, upY: upY, upW: upW, upH: upH)
-
       # create our buffer image for rendering this update
       var buffer = imlib_create_image(up_w, up_h);
       # set the image
       imlib_context_set_image(buffer)
       imlib_image_set_has_alpha(1)
-
       imlib_context_set_blend(1)
+      imlib_image_clear()
       imlib_context_set_color(background.r, background.g, background.b, background.a)
       imlib_image_fill_rectangle(0,0, value.w, value.h)
+      if bgNinepatch.image.len != 0:
+        imlib_ninepatch_draw(bgNinepatch, 0, 0, value.w, value.h)
+      #imlib_context_set_color(255,255,255,255)
 
-      # draw text - centered with the current mouse x, y
-      #font = imlib_load_font(if $args["--font"] != "nil": $args["--font"] else: "DejaVuSans/20")
-      #if font != nil:
-      #  # set the current font
-      #  imlib_context_set_font(font);
-      #  # set the color (black)
-      #  imlib_context_set_color(255, 0, 0, 255);
-      #  # print text to display in the buffer
-      #  var text = $args["<message>"]
-      #  # query the size it will be
-      #  var textW, textH: int
-      #  imlib_get_text_size(text[0].addr, textW.addr, textH.addr)
-      #  # draw it
-      #  imlib_text_draw((value.w div 2) - (text_w div 2) - up_x, (value.h div 2) - (text_h div 2) - up_y, text[0].addr)
-      #  # free the font
-      #  imlib_free_font()
-      #else:
-      #  echo "No font"
+      var x, y = 0
+      proc drawStack(s: Pack) =
+        for child in s.children:
+          case child.kind:
+          of Stack: drawStack(child)
+          of Element:
+            if images.hasKey(child.name):
+              var image = imlib_load_image(args.images[child.name].image)
+              if image != nil:
+                imlib_context_set_image(buffer)
+                #imlib_context_set_color(255, 0, 0,255)
+                #imlib_image_fill_rectangle(x, y, child.width.value.int, child.height.value.int)
+                imlib_blend_image_onto_image(image, 255, 0, 0, images[child.name].w, images[child.name].h, x, y, child.width.value.int, child.height.value.int)
+                imlib_context_set_image(image)
+                imlib_free_image()
+            if texts.hasKey(child.name):
+              imlib_context_set_image(buffer)
+              #imlib_context_set_color(255, 0, 0,255)
+              #imlib_image_fill_rectangle(x, y, child.width.value.int, child.height.value.int)
+              var font = imlib_load_font(args.text[child.name].font)
+              imlib_context_set_font(font)
+              let color = args.text[child.name].color
+              imlib_context_set_color(color.r, color.g, color.b, color.a);
+              var text = args.text[child.name].text
+              imlib_text_draw(x - up_x , y - up_y, text[0].addr)
+              imlib_free_font()
+          of Spacer: discard
+          if s.orientation == Horizontal:
+            x += child.width.value.int
+          else:
+            y += child.height.value.int
+        if s.orientation == Horizontal:
+          x -= s.width.value.int
+        else:
+          y -= s.height.value.int
+      value.layout.drawStack()
 
       # don't blend the image onto the drawable - slower
       imlib_context_set_blend(0)

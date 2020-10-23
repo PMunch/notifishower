@@ -1,17 +1,17 @@
 import npeg, kiwi, tables, strutils, sequtils
 
 type
-  PackingKind = enum Element, Stack, Spacer
-  Orientation = enum Horizontal, Vertical
-  Pack = object
-    width, height: Variable
+  PackingKind* = enum Element, Stack, Spacer
+  Orientation* = enum Horizontal, Vertical
+  Pack* = object
+    width*, height*: Variable
     constraints: seq[Constraint]
-    case kind: PackingKind
+    case kind*: PackingKind
     of Element:
-      name: string
+      name*: string
     of Stack:
-      orientation: Orientation
-      children: seq[Pack]
+      orientation*: Orientation
+      children*: seq[Pack]
     of Spacer:
       strict: bool
   Constraint = object
@@ -22,7 +22,7 @@ type
     stack: seq[Pack]
     constraints: Table[string, Constraint]
 
-proc `$`(p: Pack): string =
+proc `$`*(p: Pack): string =
   result.add $p.kind & "\n"
   result.add "  width: " & $p.width.value & "\n"
   result.add "  height: " & $p.height.value & "\n"
@@ -139,6 +139,8 @@ proc addStack(s: Solver, p: Pack, text, images: Table[string, tuple[w: int, h: i
   var nonStrictSpacers: seq[Variable]
   let parentDimension = (if p.orientation == Horizontal: p.width else: p.height)
   for child in p.children:
+    s.addConstraint(child.height >= 0)
+    s.addConstraint(child.width >= 0)
     let dimension = (if p.orientation == Horizontal: child.width else: child.height)
     case child.kind:
     of Element:
@@ -155,7 +157,7 @@ proc addStack(s: Solver, p: Pack, text, images: Table[string, tuple[w: int, h: i
         s.addEditVariable(child.height, strength)
         s.suggestValue(child.width, size)
         s.suggestValue(child.height, size)
-        s.addConstraint(child.height == child.width)
+        s.addConstraint(child.height*images[child.name][0].float == child.width*images[child.name][1].float)
     of Stack:
       s.addStack(child, text, images)
     of Spacer:
@@ -195,10 +197,17 @@ proc addStack(s: Solver, p: Pack, text, images: Table[string, tuple[w: int, h: i
   else:
     s.addConstraint(p.height == totalSize)
 
-proc parseLayout*(layout: string, w, h: int, text, images: Table[string, tuple[w: int, h: int]]): Pack =
+proc parseLayout*(layout: string, w, h: tuple[opt: string, val: int], text, images: Table[string, tuple[w: int, h: int]]): Pack =
   result = parse(layout)
+  #echo result
   var s = newSolver()
-  s.addConstraint(result.width == w.float)
-  s.addConstraint(result.height == h.float)
+  case w.opt:
+  of "==", "": s.addConstraint(result.width == w.val.float)
+  of "<=": s.addConstraint(result.width <= w.val.float)
+  of ">=": s.addConstraint(result.width >= w.val.float)
+  case h.opt:
+  of "==", "": s.addConstraint(result.height == h.val.float)
+  of "<=": s.addConstraint(result.height <= h.val.float)
+  of ">=": s.addConstraint(result.height >= h.val.float)
   s.addStack(result, text, images)
   s.updateVariables()
