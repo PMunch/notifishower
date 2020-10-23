@@ -1,52 +1,13 @@
-#import docopt
 import os, tables
 import layout, options, ninepatch
 import imlib2
-import x11 / [x, xlib, xutil, xatom, xrandr]
-
-let doc = """
-Notifishower 0.1.0
-
-This is a simple program to display a combinations of text and images as a
-notification on the screen. It also allows the user to interact with the
-notification and the program will report back which action was triggered. It
-does not read freedesktop notifications, for that you might want to check out
-notificatcher.
-
-Usage:
-  notifishower [options]
-  notifishower [-x <x> -y <y>] [options]
-  notifishower [-x <x> -y <y>] (--text <tid> <text> [--font <font>])... [options]
-  notifishower (--monitor <name> [-x <x> -y <y>])... [options]
-  notifishower (--monitor <name> [-x <x> -y <y>])... (--text <tid> <text> [--font <font>])... [options]
-
-Options:
-  --help                     Show this screen
-  -v --version               Show the version
-  --class <class>            Set the window class [default: notishower]
-  --name <name>              Set the window name [default: Notishower]
-  --monitor <name>           Sets the monitor to display on
-  -x <x>                     Set the x position of the notification [default: 0]
-  -y <y>                     Set the y position of the notification [default: 0]
-  -w --width <w>             Set the width of the notification [default: 200]
-  -h --height <h>            Set the height of the notification [default: 100]
-  --background <color>       Set the background colour of the notification
-  --border <color>           Set the border colour of the notification
-  --borderWidth <bw>         Set the width of the border [default: 0]
-  --font <font>              Set the font to draw the message in
-  --text <tid> <text>        Store a text element with a given ID
-  --image <iid> <path>       Store an image element with a given ID
-"""
+import x11 / [x, xlib, xutil, xrandr, xatom]
 
 converter intToCint(x: int): cint = x.cint
 converter intToCuint(x: int): cuint = x.cuint
 converter pintToPcint(x: ptr int): ptr cint = cast[ptr cint](x)
 converter boolToXBool(x: bool): XBool = x.XBool
 converter xboolToBool(x: XBool): bool = x.bool
-
-#echo commandLineParams()
-#let args = docopt(doc, version = "Notifishower 0.1.0")
-#echo args
 
 var args: Options
 args.background = Color(r: 68, g: 68, b: 68, a: 255)
@@ -62,6 +23,7 @@ args.format = "(-[~icon:32~]-[~title body~]-)"
 args.text["title"] = Text(font: "DejaVuSans/12", color: Color(r: 255, g: 255, b: 255, a: 255))
 args.text["body"] = Text(color: Color(r: 255, g: 255, b: 255, a: 255))
 args.images["icon"] = Image()
+args.padding = 8
 args = parseCommandLine(defaults = args)
 for _, text in args.text.mpairs:
   if text.font.len == 0:
@@ -73,10 +35,8 @@ var
   cm: Colormap
   depth: int
   ev: XEvent
-  #mouseX, mouseY: int
   windows: Table[Window, tuple[w, h: int, updates: ImlibUpdates, layout: Pack]]
   vinfo: XVisualInfo
-  background: Color
   bgNinepatch: Ninepatch
 
 type
@@ -155,15 +115,12 @@ cm    = DefaultColormap(disp, DefaultScreen(disp))
 # Use this to be able to select monitor
 randrInit()
 randrUpdate()
-echo screens
 
 # Prepare common window attributes
 discard XMatchVisualInfo(disp, DefaultScreen(disp), 32, TrueColor, vinfo.addr) == 1 or
         XMatchVisualInfo(disp, DefaultScreen(disp), 24, TrueColor, vinfo.addr) == 1 or
         XMatchVisualInfo(disp, DefaultScreen(disp), 16, DirectColor, vinfo.addr) == 1 or
         XMatchVisualInfo(disp, DefaultScreen(disp), 8, PseudoColor, vinfo.addr) == 1
-
-background = args.background
 
 var wa: XSetWindowAttributes
 wa.overrideRedirect = true
@@ -248,7 +205,7 @@ for screen in screens:
         else: args.h
       winWidth = if width < 0: screen.w + width else: width
       winHeight = if height < 0: screen.h + height else: height
-      layout = parseLayout(args.format, (args.wopt, winWidth), (args.hopt, winHeight), texts, images)
+      layout = parseLayout(args.format, (args.wopt, winWidth), (args.hopt, winHeight), args.padding, texts, images)
       xpos = screen.x + (if xinput < 0: screen.w - layout.width.value.int - borderWidth*2 + xinput + 1 else: xinput)
       ypos = screen.y + (if yinput < 0: screen.h - layout.height.value.int - borderWidth*2 + yinput + 1 else: yinput)
       win = XCreateWindow(disp, DefaultRootWindow(disp), xpos, ypos, layout.width.value.int,
@@ -256,12 +213,9 @@ for screen in screens:
         CWOverrideRedirect or CWBackPixmap or CWBackPixel or CWBorderPixel or
         CWColormap or CWEventMask, wa.addr)
     windows[win] = (w: layout.width.value.int, h: layout.height.value.int, updates: nil, layout: layout)
-    #echo layout
 
-    # tell X what events we are interested in
     discard XSelectInput(disp, win, ButtonPressMask or ButtonReleaseMask or
                 PointerMotionMask or ExposureMask);
-    # show the window
     discard XMapWindow(disp, win)
 
     # set window title and class
@@ -321,18 +275,19 @@ while true:
 
       # create our buffer image for rendering this update
       var buffer = imlib_create_image(up_w, up_h);
-      # set the image
       imlib_context_set_image(buffer)
       imlib_image_set_has_alpha(1)
       imlib_context_set_blend(1)
       imlib_image_clear()
-      imlib_context_set_color(background.r, background.g, background.b, background.a)
-      imlib_image_fill_rectangle(0,0, value.w, value.h)
+      imlib_context_set_color(args.background.r, args.background.g, args.background.b, args.background.a)
+      imlib_image_fill_rectangle(-upX, -upY, value.w, value.h)
       if bgNinepatch.image.len != 0:
-        imlib_ninepatch_draw(bgNinepatch, 0, 0, value.w, value.h)
+        imlib_ninepatch_draw(bgNinepatch, -upX, -upY, value.w, value.h)
       #imlib_context_set_color(255,255,255,255)
 
-      var x, y = 0
+      var
+        x = -upX
+        y = -upY
       proc drawStack(s: Pack) =
         for child in s.children:
           case child.kind:

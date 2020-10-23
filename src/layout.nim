@@ -134,7 +134,7 @@ proc parse(x: string): Pack =
 #echo parse("([test]->=5-[more])")
 #echo parse("([test:10 more])")
 
-proc addStack(s: Solver, p: Pack, text, images: Table[string, tuple[w: int, h: int]]) =
+proc addStack(s: Solver, p: Pack, padding: int, text, images: Table[string, tuple[w: int, h: int]]) =
   var totalSize = newExpression(0)
   var nonStrictSpacers: seq[Variable]
   let parentDimension = (if p.orientation == Horizontal: p.width else: p.height)
@@ -149,6 +149,8 @@ proc addStack(s: Solver, p: Pack, text, images: Table[string, tuple[w: int, h: i
         s.addEditVariable(child.height, createStrength(1, 0, 0, text[child.name][0].float))
         s.suggestValue(child.width, text[child.name][0].float)
         s.suggestValue(child.height, text[child.name][1].float)
+        s.addConstraint(child.width >= text[child.name][0].float)
+        s.addConstraint(child.height >= text[child.name][1].float)
       elif images.hasKey(child.name):
         let
           size = max(images[child.name][0], images[child.name][1]).float
@@ -159,11 +161,11 @@ proc addStack(s: Solver, p: Pack, text, images: Table[string, tuple[w: int, h: i
         s.suggestValue(child.height, size)
         s.addConstraint(child.height*images[child.name][0].float == child.width*images[child.name][1].float)
     of Stack:
-      s.addStack(child, text, images)
+      s.addStack(child, padding, text, images)
     of Spacer:
       if child.strict:
         if child.constraints.len == 0:
-          s.addConstraint(dimension == 8) # TODO replace with padding variable
+          s.addConstraint(dimension == padding.float)
       else:
         nonStrictSpacers.add dimension
     for constraint in child.constraints:
@@ -197,7 +199,7 @@ proc addStack(s: Solver, p: Pack, text, images: Table[string, tuple[w: int, h: i
   else:
     s.addConstraint(p.height == totalSize)
 
-proc parseLayout*(layout: string, w, h: tuple[opt: string, val: int], text, images: Table[string, tuple[w: int, h: int]]): Pack =
+proc parseLayout*(layout: string, w, h: tuple[opt: string, val: int], padding: int, text, images: Table[string, tuple[w: int, h: int]]): Pack =
   result = parse(layout)
   #echo result
   var s = newSolver()
@@ -209,5 +211,5 @@ proc parseLayout*(layout: string, w, h: tuple[opt: string, val: int], text, imag
   of "==", "": s.addConstraint(result.height == h.val.float)
   of "<=": s.addConstraint(result.height <= h.val.float)
   of ">=": s.addConstraint(result.height >= h.val.float)
-  s.addStack(result, text, images)
+  s.addStack(result, padding, text, images)
   s.updateVariables()
