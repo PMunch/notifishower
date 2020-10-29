@@ -20,7 +20,7 @@ Options:
   -h <h>                                    Set the height of the notification [default: 100]
   --background <color>                      Set the background colour of the notification
   --border <color>                          Set the border colour of the notification
-  --borderWidth <bw>                        Set the width of the border [default: 2]
+  --border.width <bw>                       Set the width of the border [default: 2]
   --font <font>                             Sets the default font for all text elements
   --<id>.text <text>                        Store a text element with a given ID
   --<id>.font <font>                        Set the font for a text element
@@ -48,6 +48,17 @@ Colors:
   Colors are simple hex colors, with an optional # prefix. If a six character
   value is passed alpha is assumed to be FF, or if an eight character value is
   passed then the last two characters are considered the alpha value.
+
+Ninepatch background:
+  In order to be better able to customise the appearance of notifications
+  notifishower also supports ninepatch background images. Ninapatches are
+  normal images with a 1px border around the entire image, this border contains
+  black pixels that signify which parts of the image can be stretched, and
+  where to place content. When setting width and height of the notification it
+  will be the width and height of the notification including the area required
+  for padding in the ninepatch image, so your actual content area might be
+  smaller. If you want the scaleable section to tile instead of stretch you can
+  pass the --ninepatch.tile true option.
 
 Fonts:
   Fonts are following the Imlib2 font format and are read from these folders:
@@ -107,12 +118,12 @@ Configuration file:
   appears and contains all the default parameters:
     background: #444444
     border: #808080
-    borderWidth: 2
+    border.width: 2
     x: 49
     y: 0
     w: -98
     h: >=0
-    defaultFont: DejaVuSans/10
+    font: DejaVuSans/10
     format: (-[~icon:32~]-[~title body~]-)
     title.font: DejaVuSans/12
     title.color: #FFFFFF
