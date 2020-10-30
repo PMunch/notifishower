@@ -1,5 +1,5 @@
 ```
-Notifishower 0.1.0
+Notifishower 0.2.0
 
 This is a simple program to display a combinations of text and images as a
 notification on the screen. It does not read freedesktop notifications, for
@@ -19,6 +19,7 @@ Options:
   -w <w>                                    Set the width of the notification [default: 200]
   -h <h>                                    Set the height of the notification [default: 100]
   --background <color>                      Set the background colour of the notification
+  --hover <color>                           Set the default colour of the hover indicator
   --border <color>                          Set the border colour of the notification
   --border.width <bw>                       Set the width of the border [default: 2]
   --font <font>                             Sets the default font for all text elements
@@ -26,11 +27,15 @@ Options:
   --<id>.font <font>                        Set the font for a text element
   --<id>.color <color>                      Set the color for a text element
   --<id>.image <path>                       Store an image element with a given ID
+  --<id>.action <action>                    Assign an action to an element
+  --<id>.hover <color>                      Set the color of the hover indicator
+  --background.action <action>              Assign an action to clicks outside any element
   --ninepatch <path>                        Set the background to a ninepatch image
   --ninepatch.tile <bool>                   Set the ninepatch to tiling mode or not
   --monitor <xrandrID> [<x>,<y>] [<w>:<h>]  Defines a monitor to show the notification on
   --format <format>                         Sets the layout of the notification
   --padding <number>                        The default padding for '-' in a pattern
+  --timeout <number>                        Close the notification after a number of seconds
 
 Positions and widths:
   X and Y positions can be the position on the monitor to display the
@@ -101,6 +106,14 @@ Layout format:
   achievable, if not a notification will not be shown. Also make sure that you
   have sufficient expanding padding regions to take up any remaining space in
   the layout.
+
+Clickable elements:
+  Elements can be made clickable by assigned them an action. This is done by
+  passing --<id>.action. When an element that has an action is clicked it will
+  write the action to stdout and close the notification. When an element that
+  has an action is hovered by the mouse it will paint a rectangle underneath
+  itself in either the default hover color or the color defined with
+  --<id>.hover.
 
 Monitors:
   By default a notification will be shown on all available monitors. If you

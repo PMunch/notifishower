@@ -1,6 +1,8 @@
 import npeg, os, strutils, tables
 
-let version = "Notifishower 0.1.0"
+const NimblePkgVersion {.strdefine.} = ""
+
+let version = "Notifishower " & NimblePkgVersion
 let doc = """
 This is a simple program to display a combinations of text and images as a
 notification on the screen. It does not read freedesktop notifications, for
