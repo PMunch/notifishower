@@ -1,6 +1,7 @@
-import os, tables
+import os, tables, selectors
 import layout, options, ninepatch
 import imlib2
+import times
 import x11 / [x, xlib, xutil, xrandr, xatom]
 
 converter intToCint(x: int): cint = x.cint
@@ -11,6 +12,7 @@ converter xboolToBool(x: XBool): bool = x.bool
 
 var args: Options
 args.background = Color(r: 68, g: 68, b: 68, a: 255)
+args.hover = Color(r: 128, g: 128, b: 128, a: 255)
 args.border = Color(r: 128, g: 128, b: 128, a: 255)
 args.borderWidth = 2
 args.x = 49
@@ -29,16 +31,6 @@ for _, text in args.text.mpairs:
   if text.font.len == 0:
     text.font = args.defaultFont
 
-var
-  disp: PDisplay
-  vis: PVisual
-  cm: Colormap
-  depth: int
-  ev: XEvent
-  windows: Table[Window, tuple[w, h: int, updates: ImlibUpdates, layout: Pack]]
-  vinfo: XVisualInfo
-  bgNinepatch: Ninepatch
-
 type
   Screen = object
     name: string
@@ -47,7 +39,26 @@ type
     x, y: int
     w, h: int
     mmh: int
+  HoverSection = object
+    x, y, w, h: int
+    action: string
+    color: Color
+  WindowInformation = object
+    w, h: int
+    updates: ImlibUpdates
+    layout: Pack
+    hoverSection: HoverSection
+
 var
+  disp: PDisplay
+  vis: PVisual
+  cm: Colormap
+  depth: int
+  ev: XEvent
+  windows: Table[Window, WindowInformation]
+  vinfo: XVisualInfo
+  bgNinepatch: Ninepatch
+  startTime = epochTime()
   randrMajorVersion, randrMinorVersion: int
   screens: seq[Screen]
 
@@ -212,10 +223,14 @@ for screen in screens:
         layout.height.value.int, borderWidth, vinfo.depth, InputOutput, vinfo.visual,
         CWOverrideRedirect or CWBackPixmap or CWBackPixel or CWBorderPixel or
         CWColormap or CWEventMask, wa.addr)
-    windows[win] = (w: layout.width.value.int, h: layout.height.value.int, updates: nil, layout: layout)
+    windows[win] = WindowInformation(
+      w: layout.width.value.int,
+      h: layout.height.value.int,
+      layout: layout
+    )
 
     discard XSelectInput(disp, win, ButtonPressMask or ButtonReleaseMask or
-                PointerMotionMask or ExposureMask);
+                PointerMotionMask or ExposureMask)
     discard XMapWindow(disp, win)
 
     # set window title and class
@@ -244,27 +259,86 @@ for screen in screens:
     discard XChangeProperty(disp, win, netWmState, XA_ATOM, 32,
             PropModeReplace, cast[ptr cuchar](data.addr), 1)
 
+proc inRect(x, y, rx, ry, rw, rh: int): bool =
+  if x >= rx and x < rx + rw and
+     y >= ry and y < ry + rh:
+    true
+  else: false
 
-template doWhile(condition, action: untyped): untyped =
-  action
-  while condition:
-    action
+proc calculateHoverSection(mx, my: int, window: var WindowInformation) =
+  reset window.hoverSection
+  var
+    x = 0
+    y = 0
+  proc calculateStack(s: Pack, window: var WindowInformation) =
+    for child in s.children:
+      case child.kind:
+      of Stack: child.calculateStack(window)
+      of Element:
+        var
+          action = args.hoverables.getOrDefault(child.name).action
+          color = args.hoverables.getOrDefault(child.name).color
+        if color.r == 0 and color.b == 0 and color.g == 0 and color.a == 0:
+          color = args.hover
+        if action != "" and
+          inRect(mx, my, x, y, child.width.value.int, child.height.value.int):
+          window.hoverSection =
+            HoverSection(x: x, y: y,
+              w: child.width.value.int, h: child.height.value.int,
+              action: action,
+              color: color)
+      of Spacer: discard
+      if s.orientation == Horizontal:
+        x += child.width.value.int
+      else:
+        y += child.height.value.int
+    if s.orientation == Horizontal:
+      x -= s.width.value.int
+    else:
+      y -= s.height.value.int
+  window.layout.calculateStack(window)
 
 while true:
-  doWhile(XPending(disp) > 0):
+  if XPending(disp) == 0: # If we don't have any XEvents, make sure we don't wait further than our timeout
+    var selector = newSelector[pointer]()
+    selector.registerHandle(ConnectionNumber(disp).int, {Read}, nil)
+    let timeout = if args.timeout == 0: -1
+      else: int((startTime + args.timeout.float - epochTime())*1000.0)
+    discard selector.select(timeout)
+  if args.timeout != 0 and startTime + args.timeout.float <= epochTime():
+    quit 0
+  while XPending(disp) > 0:
     discard XNextEvent(disp, ev.addr)
-    case ev.theType:
+    case ev.tHeType:
     of Expose:
       windows[ev.xexpose.window].updates = imlib_update_append_rect(
         windows[ev.xexpose.window].updates,
         ev.xexpose.x, ev.xexpose.y,
         ev.xexpose.width, ev.xexpose.height)
+    of MotionNotify:
+      template window(): untyped = windows[ev.xmotion.window]
+      template updateHoverSection(): untyped =
+        if window.hoverSection.w > 0 and window.hoverSection.h > 0:
+          window.updates = imlib_update_append_rect(
+            window.updates,
+            window.hoverSection.x, window.hoverSection.y,
+            window.hoverSection.w, window.hoverSection.h)
+      updateHoverSection()
+      calculateHoverSection(ev.xmotion.x, ev.xmotion.y, window)
+      updateHoverSection()
+      if window.hoverSection.action == "":
+        window.hoverSection.action = args.hoverables.getOrDefault("background").action
+    of ButtonRelease:
+      let action = windows[ev.xbutton.window].hoverSection.action
+      if action != "":
+        stdout.write action
+        quit 0
     else:
       discard screenCheckEvent(ev.addr)
 
-  for win, value in windows.mpairs:
-    value.updates = imlib_updates_merge_for_rendering(value.updates, value.w, value.h);
-    var currentUpdate = value.updates
+  for win, winInfo in windows.mpairs:
+    winInfo.updates = imlib_updates_merge_for_rendering(winInfo.updates, winInfo.w, winInfo.h);
+    var currentUpdate = winInfo.updates
     while currentUpdate != nil:
       imlib_context_set_drawable(win)
       var up_x, up_y, up_w, up_h: int
@@ -280,9 +354,9 @@ while true:
       imlib_context_set_blend(1)
       imlib_image_clear()
       imlib_context_set_color(args.background.r, args.background.g, args.background.b, args.background.a)
-      imlib_image_fill_rectangle(-upX, -upY, value.w, value.h)
+      imlib_image_fill_rectangle(-upX, -upY, winInfo.w, winInfo.h)
       if bgNinepatch.image.len != 0:
-        imlib_ninepatch_draw(bgNinepatch, -upX, -upY, value.w, value.h)
+        imlib_ninepatch_draw(bgNinepatch, -upX, -upY, winInfo.w, winInfo.h)
       #imlib_context_set_color(255,255,255,255)
 
       var
@@ -291,28 +365,25 @@ while true:
       proc drawStack(s: Pack) =
         for child in s.children:
           case child.kind:
-          of Stack: drawStack(child)
+          of Stack: child.drawStack()
           of Element:
             if images.hasKey(child.name):
               var image = imlib_load_image(args.images[child.name].image)
               if image != nil:
                 imlib_context_set_image(buffer)
-                #imlib_context_set_color(255, 0, 0,255)
-                #imlib_image_fill_rectangle(x, y, child.width.value.int, child.height.value.int)
                 imlib_blend_image_onto_image(image, 255, 0, 0, images[child.name].w, images[child.name].h, x, y, child.width.value.int, child.height.value.int)
                 imlib_context_set_image(image)
                 imlib_free_image()
             if texts.hasKey(child.name):
-              imlib_context_set_image(buffer)
-              #imlib_context_set_color(255, 0, 0,255)
-              #imlib_image_fill_rectangle(x, y, child.width.value.int, child.height.value.int)
-              var font = imlib_load_font(args.text[child.name].font)
-              imlib_context_set_font(font)
-              let color = args.text[child.name].color
-              imlib_context_set_color(color.r, color.g, color.b, color.a);
               var text = args.text[child.name].text
-              imlib_text_draw(x - up_x , y - up_y, text[0].addr)
-              imlib_free_font()
+              if text.len > 0:
+                imlib_context_set_image(buffer)
+                var font = imlib_load_font(args.text[child.name].font)
+                imlib_context_set_font(font)
+                let color = args.text[child.name].color
+                imlib_context_set_color(color.r, color.g, color.b, color.a);
+                imlib_text_draw(x, y, text[0].addr)
+                imlib_free_font()
           of Spacer: discard
           if s.orientation == Horizontal:
             x += child.width.value.int
@@ -322,7 +393,13 @@ while true:
           x -= s.width.value.int
         else:
           y -= s.height.value.int
-      value.layout.drawStack()
+
+      imlib_context_set_image(buffer)
+      let color = winInfo.hoverSection.color
+      imlib_context_set_color(color.r, color.g, color.b, color.a);
+      imlib_image_fill_rectangle(winInfo.hoverSection.x - up_x, winInfo.hoverSection.y - up_y,
+        winInfo.hoverSection.w, winInfo.hoverSection.h)
+      winInfo.layout.drawStack()
 
       # don't blend the image onto the drawable - slower
       imlib_context_set_blend(0)
@@ -335,7 +412,7 @@ while true:
       currentUpdate = imlib_updates_get_next(currentUpdate)
 
     # if we had updates - free them
-    if value.updates != nil:
-       imlib_updates_free(value.updates)
-       value.updates = nil
+    if winInfo.updates != nil:
+       imlib_updates_free(winInfo.updates)
+       winInfo.updates = nil
 

@@ -20,6 +20,7 @@ Options:
   -w <w>                                    Set the width of the notification [default: 200]
   -h <h>                                    Set the height of the notification [default: 100]
   --background <color>                      Set the background colour of the notification
+  --hover <color>                           Set the default colour of the hover indicator
   --border <color>                          Set the border colour of the notification
   --border.width <bw>                       Set the width of the border [default: 2]
   --font <font>                             Sets the default font for all text elements
@@ -27,11 +28,15 @@ Options:
   --<id>.font <font>                        Set the font for a text element
   --<id>.color <color>                      Set the color for a text element
   --<id>.image <path>                       Store an image element with a given ID
+  --<id>.action <action>                    Assign an action to an element
+  --<id>.hover <color>                      Set the color of the hover indicator
+  --background.action <action>              Assign an action to clicks outside any element
   --ninepatch <path>                        Set the background to a ninepatch image
   --ninepatch.tile <bool>                   Set the ninepatch to tiling mode or not
   --monitor <xrandrID> [<x>,<y>] [<w>:<h>]  Defines a monitor to show the notification on
   --format <format>                         Sets the layout of the notification
   --padding <number>                        The default padding for '-' in a pattern
+  --timeout <number>                        Close the notification after a number of seconds
 
 Positions and widths:
   X and Y positions can be the position on the monitor to display the
@@ -103,6 +108,14 @@ Layout format:
   have sufficient expanding padding regions to take up any remaining space in
   the layout.
 
+Clickable elements:
+  Elements can be made clickable by assigned them an action. This is done by
+  passing --<id>.action. When an element that has an action is clicked it will
+  write the action to stdout and close the notification. When an element that
+  has an action is hovered by the mouse it will paint a rectangle underneath
+  itself in either the default hover color or the color defined with
+  --<id>.hover.
+
 Monitors:
   By default a notification will be shown on all available monitors. If you
   want to define which monitors to show the notification on you can pass the
@@ -142,17 +155,23 @@ Managing notifications:
 type
   Monitor* = object
     x*, y*, w*, h*: int
+  Hover = object
+    action*: string
+    color*: Color
   Text* = object
+    ## TODO: Implement ninepatches
     text*: string
     font*: string
     color*: Color
   Image* = object
     image*: string
+  Color* = object
+    r*, g*, b*, a*: int
   Options* = object
     wopt*: string
     hopt*: string
     x*, y*, w*, h*: int
-    background*, border*: Color
+    background*, border*, hover*: Color
     borderWidth*: int
     ninepatch*: string
     ninepatchTile*: bool
@@ -161,10 +180,10 @@ type
     monitors*: Table[string, Monitor]
     text*: Table[string, Text]
     images*: Table[string, Image]
+    hoverables*: Table[string, Hover]
     name*, class*: string
     padding*: int
-  Color* = object
-    r*, g*, b*, a*: int
+    timeout*: int
 
 template monitorSetValues(i: int) =
   if capture[i+1].s == ",":
@@ -185,9 +204,10 @@ proc parseColor(color: string): Color =
 
 proc parseCommandFile*(file: string, defaults: var Options = default(Options)): Options
 
+## TODO: Make sure no layout element with name background, and check that there is no collision between images and text
 let parser = peg(input, options: Options):
   input <- option * *("\x1F" * option) * !1
-  option <- help | version | position | size | background | border | borderwidth | text | font | image | monitor | format | name | class | textColor | ninepatch | tile | config | padding
+  option <- help | version | position | size | background | hover | border | borderwidth | text | font | image | monitor | format | name | class | textColor | ninepatch | tile | config | padding | timeout | action
   help <- "--help":
     echo version & "\n"
     echo doc
@@ -225,6 +245,9 @@ let parser = peg(input, options: Options):
     options.ninepatchTile = $1 == "true"
   background <- "--background\x1F" * >color:
     options.background = parseColor($1)
+  hover <- "--" * ?(>identifier * '.') * "hover\x1F" * >color:
+    if capture.len == 2: options.hover = parseColor($1)
+    else: options.hoverables.mgetOrPut($1, Hover()).color = parseColor($2)
   border <- "--border\x1F" * >color:
     options.border = parseColor($1)
   borderwidth <- "--border.width\x1F" * >positiveNumber:
@@ -238,8 +261,12 @@ let parser = peg(input, options: Options):
   font <- "--" * ?(>identifier * '.') * "font\x1F" * >fontidentifier:
     if capture.len == 2: options.defaultFont = $1
     else: options.text.mgetOrPut($1, Text()).font = $2
+  action <- "--" * >identifier * ".action\x1F" * >string:
+    options.hoverables.mgetOrPut($1, Hover()).action = $2
   format <- "--format\x1F" * >string:
     options.format = $1
+  timeout <- "--timeout\x1F" * >positiveNumber:
+    options.timeout = parseInt($1)
   name <- "--name\x1F" * >string:
     options.name = $1
   class <- "--class\x1F" * >string:
@@ -270,7 +297,8 @@ proc parseCommandLine*(defaults: var Options = default(Options), opts = commandL
 proc parseCommandFile*(file: string, defaults: var Options = default(Options)): Options =
   var options: seq[string]
   for line in file.lines:
-    let split = line.split(":", maxSplit = 1)
-    options.add "-".repeat(min(2, split[0].len)) & split[0]
-    options.add split[1].strip
+    if line.strip[0] != '#':
+      let split = line.split(":", maxSplit = 1)
+      options.add "-".repeat(min(2, split[0].len)) & split[0]
+      options.add split[1].strip
   parseCommandLine(defaults, options)
