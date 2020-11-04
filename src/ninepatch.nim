@@ -67,6 +67,7 @@ proc imlib_ninepatch_draw*(np: Ninepatch, x, y, w, h: cint) =
       lh = ch mod np.heights[1]
       lw = cw mod np.widths[1]
       ninepatch = imlib_load_image(np.image)
+    if ninepatch.isNil: return
     if np.snap:
       ch -= lh
       cw -= lw

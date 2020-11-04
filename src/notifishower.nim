@@ -40,6 +40,7 @@ type
     w, h: int
     mmh: int
   HoverSection = object
+    element: string
     x, y, w, h: int
     action: string
     color: Color
@@ -58,6 +59,8 @@ var
   windows: Table[Window, WindowInformation]
   vinfo: XVisualInfo
   bgNinepatch: Ninepatch
+  backgroundPatches: Table[string, Ninepatch]
+  hoverPatches: Table[string, Ninepatch]
   startTime = epochTime()
   randrMajorVersion, randrMinorVersion: int
   screens: seq[Screen]
@@ -171,6 +174,20 @@ if args.ninepatch.len != 0:
       dh = bgNinepatch.dheight
     args.format = "(-" & $dx & "-[-" & $dy & "-" & args.format & "-" & $dh & "-]-" & $ $dw & "-)"
 
+for element, background in args.backgrounds:
+  if background.ninepatch.len != 0:
+    var loaded = imlib_load_ninepatch(background.ninepatch)
+    if loaded.image == background.ninepatch:
+      loaded.tile = background.ninepatchTile
+      backgroundPatches[element] = loaded
+
+for element, hover in args.hoverables:
+  if hover.ninepatch.len != 0:
+    var loaded = imlib_load_ninepatch(hover.ninepatch)
+    if loaded.image == hover.ninepatch:
+      loaded.tile = hover.ninepatchTile
+      hoverPatches[element] = loaded
+
 var texts, images: Table[string, tuple[w, h: int]]
 for name, text in args.text:
   var loadedFont = imlib_load_font(text.font)
@@ -229,7 +246,7 @@ for screen in screens:
       layout: layout
     )
 
-    discard XSelectInput(disp, win, ButtonPressMask or ButtonReleaseMask or
+    discard XSelectInput(disp, win, KeyPressMask or ButtonPressMask or ButtonReleaseMask or
                 PointerMotionMask or ExposureMask)
     discard XMapWindow(disp, win)
 
@@ -259,44 +276,59 @@ for screen in screens:
     discard XChangeProperty(disp, win, netWmState, XA_ATOM, 32,
             PropModeReplace, cast[ptr cuchar](data.addr), 1)
 
+  for shortcut in args.shortcuts.keys:
+    discard XGrabKey(disp, XKeysymToKeycode(disp, shortcut.key).cint, shortcut.mask, DefaultRootWindow(disp),
+      false, GrabModeAsync, GrabModeAsync);
+
+  if args.defaultShortcut.mask != 0 or args.defaultShortcut.key.int != 0:
+    discard XGrabKey(disp, XKeysymToKeycode(disp, args.defaultShortcut.key).cint, args.defaultShortcut.mask, DefaultRootWindow(disp),
+      false, GrabModeAsync, GrabModeAsync);
+
 proc inRect(x, y, rx, ry, rw, rh: int): bool =
   if x >= rx and x < rx + rw and
      y >= ry and y < ry + rh:
     true
-  else: false
+  else:
+    false
+
+template forEachElement(startX, startY: int, body: untyped): untyped =
+  block:
+    var
+      x {.inject.} = startX
+      y {.inject.} = startY
+    proc calculateStack(s: Pack, window {.inject.}: var WindowInformation) =
+      for element {.inject.} in s.children:
+        case element.kind:
+        of Stack: element.calculateStack(window)
+        of Element:
+          body
+        of Spacer: discard
+        if s.orientation == Horizontal:
+          x += element.width.value.int
+        else:
+          y += element.height.value.int
+      if s.orientation == Horizontal:
+        x -= s.width.value.int
+      else:
+        y -= s.height.value.int
+    window.layout.calculateStack(window)
 
 proc calculateHoverSection(mx, my: int, window: var WindowInformation) =
   reset window.hoverSection
-  var
-    x = 0
-    y = 0
-  proc calculateStack(s: Pack, window: var WindowInformation) =
-    for child in s.children:
-      case child.kind:
-      of Stack: child.calculateStack(window)
-      of Element:
-        var
-          action = args.hoverables.getOrDefault(child.name).action
-          color = args.hoverables.getOrDefault(child.name).color
-        if color.r == 0 and color.b == 0 and color.g == 0 and color.a == 0:
-          color = args.hover
-        if action != "" and
-          inRect(mx, my, x, y, child.width.value.int, child.height.value.int):
-          window.hoverSection =
-            HoverSection(x: x, y: y,
-              w: child.width.value.int, h: child.height.value.int,
-              action: action,
-              color: color)
-      of Spacer: discard
-      if s.orientation == Horizontal:
-        x += child.width.value.int
-      else:
-        y += child.height.value.int
-    if s.orientation == Horizontal:
-      x -= s.width.value.int
-    else:
-      y -= s.height.value.int
-  window.layout.calculateStack(window)
+  forEachElement(0, 0):
+    var
+      action = args.hoverables.getOrDefault(element.name).action
+      color = args.hoverables.getOrDefault(element.name).color
+    if color.r == 0 and color.b == 0 and color.g == 0 and color.a == 0:
+      color = args.hover
+    if action != "" and
+      inRect(mx, my, x, y, element.width.value.int, element.height.value.int):
+      window.hoverSection =
+        HoverSection(x: x, y: y,
+          w: element.width.value.int, h: element.height.value.int,
+          element: element.name,
+          action: action,
+          color: color)
 
 while true:
   if XPending(disp) == 0: # If we don't have any XEvents, make sure we don't wait further than our timeout
@@ -305,6 +337,7 @@ while true:
     let timeout = if args.timeout == 0: -1
       else: int((startTime + args.timeout.float - epochTime())*1000.0)
     discard selector.select(timeout)
+    selector.close
   if args.timeout != 0 and startTime + args.timeout.float <= epochTime():
     quit 0
   while XPending(disp) > 0:
@@ -319,6 +352,18 @@ while true:
       template window(): untyped = windows[ev.xmotion.window]
       template updateHoverSection(): untyped =
         if window.hoverSection.w > 0 and window.hoverSection.h > 0:
+          if backgroundPatches.hasKey(window.hoverSection.element):
+            let patch = backgroundPatches[window.hoverSection.element]
+            window.updates = imlib_update_append_rect(
+              window.updates,
+              window.hoverSection.x - patch.startDX, window.hoverSection.y - patch.startDY,
+              window.hoverSection.w + patch.startDX + patch.dwidth, window.hoverSection.h + patch.startDY + patch.dheight)
+          if hoverPatches.hasKey(window.hoverSection.element):
+            let patch = hoverPatches[window.hoverSection.element]
+            window.updates = imlib_update_append_rect(
+              window.updates,
+              window.hoverSection.x - patch.startDX, window.hoverSection.y - patch.startDY,
+              window.hoverSection.w + patch.startDX + patch.dwidth, window.hoverSection.h + patch.startDY + patch.dheight)
           window.updates = imlib_update_append_rect(
             window.updates,
             window.hoverSection.x, window.hoverSection.y,
@@ -327,20 +372,30 @@ while true:
       calculateHoverSection(ev.xmotion.x, ev.xmotion.y, window)
       updateHoverSection()
       if window.hoverSection.action == "":
-        window.hoverSection.action = args.hoverables.getOrDefault("background").action
+        window.hoverSection.action = args.defaultAction
     of ButtonRelease:
       let action = windows[ev.xbutton.window].hoverSection.action
       if action != "":
         stdout.write action
         quit 0
+    of KeyPress:
+      let shortcut = Shortcut(mask: ev.xkey.state, key: XLookupKeysym(ev.xkey.addr, 0))
+      if args.defaultShortcut == shortcut and args.defaultAction.len != 0:
+        stdout.write args.defaultAction
+        quit 0
+      if args.shortcuts.hasKey(shortcut):
+        let element = args.shortcuts[shortcut]
+        if args.hoverables.hasKey(element):
+          stdout.write args.hoverables[element].action
+          quit 0
     else:
       discard screenCheckEvent(ev.addr)
 
-  for win, winInfo in windows.mpairs:
-    winInfo.updates = imlib_updates_merge_for_rendering(winInfo.updates, winInfo.w, winInfo.h);
-    var currentUpdate = winInfo.updates
+  for winId, window in windows.mpairs:
+    window.updates = imlib_updates_merge_for_rendering(window.updates, window.w, window.h);
+    var currentUpdate = window.updates
     while currentUpdate != nil:
-      imlib_context_set_drawable(win)
+      imlib_context_set_drawable(winId)
       var up_x, up_y, up_w, up_h: int
 
       # find out where the first update is
@@ -354,52 +409,57 @@ while true:
       imlib_context_set_blend(1)
       imlib_image_clear()
       imlib_context_set_color(args.background.r, args.background.g, args.background.b, args.background.a)
-      imlib_image_fill_rectangle(-upX, -upY, winInfo.w, winInfo.h)
+      imlib_image_fill_rectangle(-upX, -upY, window.w, window.h)
       if bgNinepatch.image.len != 0:
-        imlib_ninepatch_draw(bgNinepatch, -upX, -upY, winInfo.w, winInfo.h)
+        imlib_ninepatch_draw(bgNinepatch, -upX, -upY, window.w, window.h)
       #imlib_context_set_color(255,255,255,255)
 
-      var
-        x = -upX
-        y = -upY
-      proc drawStack(s: Pack) =
-        for child in s.children:
-          case child.kind:
-          of Stack: child.drawStack()
-          of Element:
-            if images.hasKey(child.name):
-              var image = imlib_load_image(args.images[child.name].image)
-              if image != nil:
-                imlib_context_set_image(buffer)
-                imlib_blend_image_onto_image(image, 255, 0, 0, images[child.name].w, images[child.name].h, x, y, child.width.value.int, child.height.value.int)
-                imlib_context_set_image(image)
-                imlib_free_image()
-            if texts.hasKey(child.name):
-              var text = args.text[child.name].text
-              if text.len > 0:
-                imlib_context_set_image(buffer)
-                var font = imlib_load_font(args.text[child.name].font)
-                imlib_context_set_font(font)
-                let color = args.text[child.name].color
-                imlib_context_set_color(color.r, color.g, color.b, color.a);
-                imlib_text_draw(x, y, text[0].addr)
-                imlib_free_font()
-          of Spacer: discard
-          if s.orientation == Horizontal:
-            x += child.width.value.int
-          else:
-            y += child.height.value.int
-        if s.orientation == Horizontal:
-          x -= s.width.value.int
-        else:
-          y -= s.height.value.int
-
       imlib_context_set_image(buffer)
-      let color = winInfo.hoverSection.color
-      imlib_context_set_color(color.r, color.g, color.b, color.a);
-      imlib_image_fill_rectangle(winInfo.hoverSection.x - up_x, winInfo.hoverSection.y - up_y,
-        winInfo.hoverSection.w, winInfo.hoverSection.h)
-      winInfo.layout.drawStack()
+      if hoverPatches.hasKey(window.hoverSection.element):
+        let patch = hoverPatches[window.hoverSection.element]
+        imlib_ninepatch_draw(patch, window.hoverSection.x - up_x - patch.startDX,
+          window.hoverSection.y - up_y - patch.startDY,
+          window.hoverSection.w + patch.startDX + patch.dwidth,
+          window.hoverSection.h + patch.startDY + patch.dheight)
+      else:
+        let color = window.hoverSection.color
+        imlib_context_set_color(color.r, color.g, color.b, color.a)
+        imlib_image_fill_rectangle(window.hoverSection.x - up_x, window.hoverSection.y - up_y,
+          window.hoverSection.w, window.hoverSection.h)
+
+      forEachElement(-up_x, -up_y):
+        let
+          w = element.width.value.int
+          h = element.height.value.int
+        if args.backgrounds.hasKey(element.name) and window.hoverSection.element != element.name:
+          imlib_context_set_image(buffer)
+          if backgroundPatches.hasKey(element.name):
+            let patch = backgroundPatches[element.name]
+            imlib_ninepatch_draw(patch, x - patch.startDX, y - patch.startDY,
+              w + patch.startDX + patch.dwidth, h + patch.startDY + patch.dheight)
+          else:
+            let color = args.backgrounds[element.name].background
+            imlib_context_set_color(color.r, color.g, color.b, color.a);
+            imlib_image_fill_rectangle(x, y, w, h)
+        if images.hasKey(element.name):
+          var image = imlib_load_image(args.images[element.name].image)
+          if image != nil:
+            imlib_context_set_image(buffer)
+            imlib_blend_image_onto_image(image, 255, 0, 0,
+              images[element.name].w, images[element.name].h,
+              x, y, w, h)
+            imlib_context_set_image(image)
+            imlib_free_image()
+        if texts.hasKey(element.name):
+          var text = args.text[element.name].text
+          if text.len > 0:
+            imlib_context_set_image(buffer)
+            var font = imlib_load_font(args.text[element.name].font)
+            imlib_context_set_font(font)
+            let color = args.text[element.name].color
+            imlib_context_set_color(color.r, color.g, color.b, color.a)
+            imlib_text_draw(x, y, text[0].addr)
+            imlib_free_font()
 
       # don't blend the image onto the drawable - slower
       imlib_context_set_blend(0)
@@ -412,7 +472,7 @@ while true:
       currentUpdate = imlib_updates_get_next(currentUpdate)
 
     # if we had updates - free them
-    if winInfo.updates != nil:
-       imlib_updates_free(winInfo.updates)
-       winInfo.updates = nil
+    if window.updates != nil:
+       imlib_updates_free(window.updates)
+       window.updates = nil
 

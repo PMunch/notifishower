@@ -1,4 +1,5 @@
-import npeg, os, strutils, tables
+import npeg, os, strutils, tables, hashes
+import x11 / [x, xlib]
 
 const NimblePkgVersion {.strdefine.} = ""
 
@@ -26,15 +27,21 @@ Options:
   --border <color>                          Set the border colour of the notification
   --border.width <bw>                       Set the width of the border [default: 2]
   --font <font>                             Sets the default font for all text elements
+  --action <action>                         Assign an action to clicks outside any element
+  --ninepatch <path>                        Set the background to a ninepatch image
+  --tile <bool>                             Set the ninepatch to tiling mode or not
+  --shortcut <shortcut>                     Sets a keyboard shortcut for the default action
   --<id>.text <text>                        Store a text element with a given ID
   --<id>.font <font>                        Set the font for a text element
   --<id>.color <color>                      Set the color for a text element
   --<id>.image <path>                       Store an image element with a given ID
+  --<id>.ninepatch <path>                   Set the background of an element to a ninepatch
+  --<id>.tile <bool>                        Set the tiling mode of the background ninepatch
   --<id>.action <action>                    Assign an action to an element
   --<id>.hover <color>                      Set the color of the hover indicator
-  --background.action <action>              Assign an action to clicks outside any element
-  --ninepatch <path>                        Set the background to a ninepatch image
-  --ninepatch.tile <bool>                   Set the ninepatch to tiling mode or not
+  --<id>.hover.ninepatch <path>             Set the hover indicator of an element to a ninepatch
+  --<id>.hover.tile <bool>                  Set the tiling mode of the hover indicator ninepatch
+  --<id>.shortcut <shortcut>                Adds a keyboard shortcut to run the element action
   --monitor <xrandrID> [<x>,<y>] [<w>:<h>]  Defines a monitor to show the notification on
   --format <format>                         Sets the layout of the notification
   --padding <number>                        The default padding for '-' in a pattern
@@ -59,14 +66,19 @@ Colors:
 
 Ninepatch background:
   In order to be better able to customise the appearance of notifications
-  notifishower also supports ninepatch background images. Ninapatches are
-  normal images with a 1px border around the entire image, this border contains
-  black pixels that signify which parts of the image can be stretched, and
-  where to place content. When setting width and height of the notification it
-  will be the width and height of the notification including the area required
-  for padding in the ninepatch image, so your actual content area might be
-  smaller. If you want the scaleable section to tile instead of stretch you can
-  pass the --ninepatch.tile true option.
+  notifishower also supports ninepatch background images. Ninepatches are normal
+  images with a 1px border around the entire image, this border contains
+  contiguous black pixels that signify which parts of the image can be
+  stretched, and where to place content. When setting width and height of the
+  notification it will be the width and height of the notification including the
+  area required for padding in the ninepatch image, so your actual content area
+  might be smaller. If you want the scaleable section to tile instead of stretch
+  you can pass the --tile true option.
+  Ninepatches can also be applied as background to any element. This is done by
+  passing --<id>.ninepatch and similarily --<id>.tile. Unlike the global
+  ninepatch background this draws the ninepatch outside the element so if you
+  want to make sure it doesn't appear under other elements or collide with other
+  backgrounds you need to supply your own padding in the format.
 
 Fonts:
   Fonts are following the Imlib2 font format and are read from these folders:
@@ -116,7 +128,27 @@ Clickable elements:
   write the action to stdout and close the notification. When an element that
   has an action is hovered by the mouse it will paint a rectangle underneath
   itself in either the default hover color or the color defined with
-  --<id>.hover.
+  --<id>.hover. If you want to add a ninepatch image instead as the hover
+  background you can use --<id>.hover.ninepatch and --<id>.hover.tile to
+  specify the image and the tiling mode.
+
+Shortcuts:
+  Elements with an action can also be assigned a shortcut. You can pass
+  --<id>.shortcut and a shortcut containing zero or more modifiers followed by a
+  key name, separated by '+' symbols. For example 'ctrl+shift+b' or
+  'XF86Search'. When the shortcut is pressed the action will be triggered the
+  same way as if the element was clicked.
+  The modifiers can be:
+    ctrl
+    shift
+    lock
+    mod1
+    mod2
+    mod3
+    mod4
+    mod5
+  They can all be remapped in your X11 configuration, to see what they are
+  bound to, you can run 'xmodmap -pm' to print the modifier map.
 
 Monitors:
   By default a notification will be shown on all available monitors. If you
@@ -157,11 +189,19 @@ Managing notifications:
 type
   Monitor* = object
     x*, y*, w*, h*: int
-  Hover = object
+  Hover* = object
     action*: string
     color*: Color
+    ninepatch*: string
+    ninepatchTile*: bool
+  Background* = object
+    background*: Color
+    ninepatch*: string
+    ninepatchTile*: bool
+  Shortcut* = object
+    mask*: cuint
+    key*: KeySym
   Text* = object
-    ## TODO: Implement ninepatches
     text*: string
     font*: string
     color*: Color
@@ -178,14 +218,24 @@ type
     ninepatch*: string
     ninepatchTile*: bool
     defaultFont*: string
+    defaultAction*: string
+    defaultShortcut*: Shortcut
     format*: string
     monitors*: Table[string, Monitor]
     text*: Table[string, Text]
     images*: Table[string, Image]
     hoverables*: Table[string, Hover]
+    backgrounds*: Table[string, Background]
+    shortcuts*: Table[Shortcut, string]
     name*, class*: string
     padding*: int
     timeout*: int
+
+proc hash*(x: Shortcut): Hash =
+  var h: Hash = 0
+  h = h !& hash(x.mask)
+  h = h !& hash(x.key.int)
+  result = !$h
 
 template monitorSetValues(i: int) =
   if capture[i+1].s == ",":
@@ -206,10 +256,10 @@ proc parseColor(color: string): Color =
 
 proc parseCommandFile*(file: string, defaults: var Options = default(Options)): Options
 
-## TODO: Make sure no layout element with name background, and check that there is no collision between images and text
+## TODO: Check that there is no collision between images and text
 let parser = peg(input, options: Options):
   input <- option * *("\x1F" * option) * !1
-  option <- help | version | position | size | background | hover | border | borderwidth | text | font | image | monitor | format | name | class | textColor | ninepatch | tile | config | padding | timeout | action
+  option <- help | version | position | size | background | hover | border | borderwidth | text | font | image | monitor | format | name | class | textColor | ninepatch | tile | config | padding | timeout | action | hoverNinepatch | hoverTile | shortcut
   help <- "--help":
     echo version & "\n"
     echo doc
@@ -239,17 +289,43 @@ let parser = peg(input, options: Options):
       options.hopt = $2
   padding <- "--padding" * "\x1F" * >positiveNumber:
     options.padding = parseInt($1)
-  ninepatch <- "--ninepatch\x1F" * >string:
-    options.ninepatch = $1
+  ninepatch <- "--" * ?(>identifier * '.') * "ninepatch\x1F" * >string:
+    if capture.len == 2: options.ninepatch = $1
+    else: options.backgrounds.mgetOrPut($1, Background()).ninepatch = $2
   config <- "--config\x1F" * >string:
     options = parseCommandFile($1, options)
-  tile <- "--ninepatch.tile\x1F" * >("true" | "false"):
-    options.ninepatchTile = $1 == "true"
-  background <- "--background\x1F" * >color:
-    options.background = parseColor($1)
+  tile <- "--" * ?(>identifier * '.') * "tile\x1F" * >boolean:
+    if capture.len == 2: options.ninepatchTile = $1 == "true"
+    else: options.backgrounds.mgetOrPut($1, Background()).ninepatchTile = $2 == "true"
+  background <- "--" * ?(>identifier * '.') * "background\x1F" * >color:
+    if capture.len == 2: options.background = parseColor($1)
+    else: options.backgrounds.mgetOrPut($1, Background()).background = parseColor($2)
   hover <- "--" * ?(>identifier * '.') * "hover\x1F" * >color:
     if capture.len == 2: options.hover = parseColor($1)
     else: options.hoverables.mgetOrPut($1, Hover()).color = parseColor($2)
+  hoverNinepatch <- "--" * >identifier * ".hover.ninepatch\x1F" * >string:
+    options.hoverables.mgetOrPut($1, Hover()).ninepatch = $2
+  shortcut <- "--" * ?(>identifier * '.') * "shortcut\x1F" * >shortcutPattern:
+    var shortcut: Shortcut
+    let
+      shortcutPattern = if capture.len == 2: $1 else: $2
+      pattern = shortcutPattern.split('+')
+    shortcut.key = XStringToKeysym(pattern[^1])
+    for modifier in pattern[0..^2]:
+      shortcut.mask = shortcut.mask or (case modifier:
+        of "ctrl": ControlMask
+        of "shift": ShiftMask
+        of "lock": LockMask
+        of "mod1": Mod1Mask
+        of "mod2": Mod2Mask
+        of "mod3": Mod3Mask
+        of "mod4": Mod4Mask
+        of "mod5": Mod5Mask
+        else: 0)
+    if capture.len == 2: options.defaultShortcut = shortcut
+    else: options.shortcuts[shortcut] = $1
+  hoverTile <- "--" * >identifier * ".hover.tile\x1F" * >boolean:
+    options.hoverables.mgetOrPut($1, Hover()).ninepatchTile = $2 == "true"
   border <- "--border\x1F" * >color:
     options.border = parseColor($1)
   borderwidth <- "--border.width\x1F" * >positiveNumber:
@@ -263,8 +339,9 @@ let parser = peg(input, options: Options):
   font <- "--" * ?(>identifier * '.') * "font\x1F" * >fontidentifier:
     if capture.len == 2: options.defaultFont = $1
     else: options.text.mgetOrPut($1, Text()).font = $2
-  action <- "--" * >identifier * ".action\x1F" * >string:
-    options.hoverables.mgetOrPut($1, Hover()).action = $2
+  action <- "--" * ?(>identifier * ".") * "action\x1F" * >string:
+    if capture.len == 2: options.defaultAction = $1
+    else: options.hoverables.mgetOrPut($1, Hover()).action = $2
   format <- "--format\x1F" * >string:
     options.format = $1
   timeout <- "--timeout\x1F" * >positiveNumber:
@@ -278,6 +355,9 @@ let parser = peg(input, options: Options):
   positiveNumber <- ({'1'..'9'} * *Digit) | '0'
   identifier <- Alpha * *(Alnum | '_')
   string <- *Print
+  boolean <- "true" | "false"
+  modifiers <- "ctrl" | "shift" | "lock" | "mod1" | "mod2" | "mod3" | "mod4" | "mod5"
+  shortcutPattern <- *(modifiers * '+') * string
   #string <- (+UnquotStrChar) | ('"' * *StrChar * '"')
   #UnquotStrChar <- {'!', 0x23..0x7E}
   #StrChar <- {'\t', ' ', '!', 0x23..0x7E}
