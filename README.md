@@ -1,5 +1,5 @@
 ```
-Notifishower 0.2.0
+Notifishower 0.3.0
 
 This is a simple program to display a combinations of text and images as a
 notification on the screen. It does not read freedesktop notifications, for
@@ -23,15 +23,21 @@ Options:
   --border <color>                          Set the border colour of the notification
   --border.width <bw>                       Set the width of the border [default: 2]
   --font <font>                             Sets the default font for all text elements
+  --action <action>                         Assign an action to clicks outside any element
+  --ninepatch <path>                        Set the background to a ninepatch image
+  --tile <bool>                             Set the ninepatch to tiling mode or not
+  --shortcut <shortcut>                     Sets a keyboard shortcut for the default action
   --<id>.text <text>                        Store a text element with a given ID
   --<id>.font <font>                        Set the font for a text element
   --<id>.color <color>                      Set the color for a text element
   --<id>.image <path>                       Store an image element with a given ID
+  --<id>.ninepatch <path>                   Set the background of an element to a ninepatch
+  --<id>.tile <bool>                        Set the tiling mode of the background ninepatch
   --<id>.action <action>                    Assign an action to an element
   --<id>.hover <color>                      Set the color of the hover indicator
-  --background.action <action>              Assign an action to clicks outside any element
-  --ninepatch <path>                        Set the background to a ninepatch image
-  --ninepatch.tile <bool>                   Set the ninepatch to tiling mode or not
+  --<id>.hover.ninepatch <path>             Set the hover indicator of an element to a ninepatch
+  --<id>.hover.tile <bool>                  Set the tiling mode of the hover indicator ninepatch
+  --<id>.shortcut <shortcut>                Adds a keyboard shortcut to run the element action
   --monitor <xrandrID> [<x>,<y>] [<w>:<h>]  Defines a monitor to show the notification on
   --format <format>                         Sets the layout of the notification
   --padding <number>                        The default padding for '-' in a pattern
@@ -56,14 +62,19 @@ Colors:
 
 Ninepatch background:
   In order to be better able to customise the appearance of notifications
-  notifishower also supports ninepatch background images. Ninapatches are
-  normal images with a 1px border around the entire image, this border contains
-  black pixels that signify which parts of the image can be stretched, and
-  where to place content. When setting width and height of the notification it
-  will be the width and height of the notification including the area required
-  for padding in the ninepatch image, so your actual content area might be
-  smaller. If you want the scaleable section to tile instead of stretch you can
-  pass the --ninepatch.tile true option.
+  notifishower also supports ninepatch background images. Ninepatches are normal
+  images with a 1px border around the entire image, this border contains
+  contiguous black pixels that signify which parts of the image can be
+  stretched, and where to place content. When setting width and height of the
+  notification it will be the width and height of the notification including the
+  area required for padding in the ninepatch image, so your actual content area
+  might be smaller. If you want the scaleable section to tile instead of stretch
+  you can pass the --tile true option.
+  Ninepatches can also be applied as background to any element. This is done by
+  passing --<id>.ninepatch and similarily --<id>.tile. Unlike the global
+  ninepatch background this draws the ninepatch outside the element so if you
+  want to make sure it doesn't appear under other elements or collide with other
+  backgrounds you need to supply your own padding in the format.
 
 Fonts:
   Fonts are following the Imlib2 font format and are read from these folders:
@@ -113,7 +124,27 @@ Clickable elements:
   write the action to stdout and close the notification. When an element that
   has an action is hovered by the mouse it will paint a rectangle underneath
   itself in either the default hover color or the color defined with
-  --<id>.hover.
+  --<id>.hover. If you want to add a ninepatch image instead as the hover
+  background you can use --<id>.hover.ninepatch and --<id>.hover.tile to
+  specify the image and the tiling mode.
+
+Shortcuts:
+  Elements with an action can also be assigned a shortcut. You can pass
+  --<id>.shortcut and a shortcut containing zero or more modifiers followed by a
+  key name, separated by '+' symbols. For example 'ctrl+shift+b' or
+  'XF86Search'. When the shortcut is pressed the action will be triggered the
+  same way as if the element was clicked.
+  The modifiers can be:
+    ctrl
+    shift
+    lock
+    mod1
+    mod2
+    mod3
+    mod4
+    mod5
+  They can all be remapped in your X11 configuration, to see what they are
+  bound to, you can run 'xmodmap -pm' to print the modifier map.
 
 Monitors:
   By default a notification will be shown on all available monitors. If you
