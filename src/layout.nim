@@ -1,10 +1,12 @@
-import npeg, kiwi, tables, strutils, sequtils
+import npeg, kiwi, tables, strutils, sequtils, random
+import termstyle
 
 type
   PackingKind* = enum Element, Stack, Spacer
   Orientation* = enum Horizontal, Vertical
-  Pack* = object
+  Pack* = ref object
     width*, height*: Variable
+    color*: tuple[red, green, blue: uint8]
     constraints: seq[Constraint]
     case kind*: PackingKind
     of Element:
@@ -21,6 +23,32 @@ type
   ParseState = object
     stack: seq[Pack]
     constraints: Table[string, Constraint]
+  LayoutDefect = object of Defect
+    defective: Pack
+
+proc `toFormatLanguage`*(p: Pack, highlight: Pack = nil): string =
+  if p == highlight:
+    result.add termRed
+  case p.kind:
+  of Element:
+    result.add p.name
+  of Stack:
+    result.add if p.orientation == Horizontal: "(" else: "["
+    for i, child in p.children:
+      result.add child.toFormatLanguage(highlight)
+      if child.kind != Spacer and i != p.children.high:
+        result.add if p.children[i+1].kind == Spacer: "" else: " "
+    result.add if p.orientation == Horizontal: ")" else: "]"
+  of Spacer:
+    result.add if p.strict: "-" else: "~"
+  if p.constraints.len != 0:
+    for constraint in p.constraints:
+      result.add (if p.kind != Spacer: ":" else: "") & (if constraint.comparator == "==": "" else: constraint.comparator) &
+        $constraint.value & (if constraint.percentage: "%" else: "")
+      if p.kind == Spacer:
+        result.add "-"
+  if p == highlight:
+    result.add termClear
 
 proc `$`*(p: Pack): string =
   result.add $p.kind & "\n"
@@ -38,18 +66,21 @@ proc `$`*(p: Pack): string =
 
 proc newStack(orientation: Orientation): Pack =
   result = Pack(kind: Stack)
+  result.color = (rand(uint8), rand(uint8), rand(uint8))
   result.width = newVariable()
   result.height = newVariable()
   result.orientation = orientation
 
 proc newSpacer(strict: bool): Pack =
   result = Pack(kind: Spacer)
+  result.color = (rand(uint8), rand(uint8), rand(uint8))
   result.width = newVariable()
   result.height = newVariable()
   result.strict = strict
 
 proc newElement(name: string): Pack =
   result = Pack(kind: Element)
+  result.color = (rand(uint8), rand(uint8), rand(uint8))
   result.name = name
   result.width = newVariable()
   result.height = newVariable()
@@ -61,9 +92,9 @@ proc last[T](x: var seq[T]): var T =
   x[x.high]
 
 let
-  parser = peg(stack, ps: ParseState):
+  parser = peg(outer, ps: ParseState):
     outer <- (outerHorizontal | outerVertical) * !1
-    stack <- horizontal | vertical
+    stack <- (horizontal | vertical) * *' '
     outerHorizontal <- startHorizontal * children * stopHorizontal
     outerVertical <- startVertical * children * stopVertical
     horizontal <- outerHorizontal * ?(':' * >constraint):
@@ -73,7 +104,7 @@ let
       if capture.len > 1:
         ps.stack.last.children.last.constrain ps.constraints[$1]
     elements <- element * *(+' ' * element)
-    children <- ?spacer * +((stack | elements) * ?spacer)
+    children <- ?spacer * +((stack | (element * *' ')) * ?spacer)
     constraint <- >?(">=" | "<=") * >positiveNumber * >?'%':
       ps.constraints[$0] = Constraint(
         comparator: if len($1) == 0: "==" else: $1,
@@ -113,8 +144,13 @@ proc parse(x: string): Pack =
     match = parser.match(x, ps)
   if match.ok:
     # TODO: Verify that ps is good
-    return ps.stack[0].children[0]
+    if ps.stack.len == 1 and ps.stack[0].children.len == 1:
+      return ps.stack[0].children[0]
+    else:
+      echo "Parser returned illegal state"
+      quit 1
   else:
+    # TODO: Integrate error messages into npeg pattern
     echo "Error at:"
     echo x
     echo " ".repeat(match.matchMax) & "^"
@@ -134,82 +170,108 @@ proc parse(x: string): Pack =
 #echo parse("([test]->=5-[more])")
 #echo parse("([test:10 more])")
 
-proc addStack(s: Solver, p: Pack, padding: int, text, images: Table[string, tuple[w: int, h: int]]) =
+template failWithMessage(child: Pack, message: string, action: untyped): untyped =
+  try:
+    action
+  except ValueError as e:
+    var defect = newException(LayoutDefect, message)
+    defect.defective = child
+    raise defect
+
+proc addStack(s: Solver, p: Pack, padding: int, text, images: Table[string, tuple[w: int, h: int]], depth: int) =
+  # TODO: add more failWithMessage statements for better debugging
   var totalSize = newExpression(0)
   var nonStrictSpacers: seq[Variable]
-  let parentDimension = (if p.orientation == Horizontal: p.width else: p.height)
+  let
+    parentDimension = (if p.orientation == Horizontal: p.width else: p.height)
+    parentOtherDimension = (if p.orientation == Horizontal: p.height else: p.width)
   for child in p.children:
+    let
+      dimension = (if p.orientation == Horizontal: child.width else: child.height)
+      otherDimension = (if p.orientation == Horizontal: child.height else: child.width)
     s.addConstraint(child.height >= 0)
     s.addConstraint(child.width >= 0)
-    let dimension = (if p.orientation == Horizontal: child.width else: child.height)
+    if child.kind != Spacer:
+      s.addConstraint(otherDimension == parentOtherDimension)
     case child.kind:
     of Element:
       if text.hasKey(child.name):
-        s.addEditVariable(child.width, createStrength(1, 0, 0, text[child.name][0].float))
-        s.addEditVariable(child.height, createStrength(1, 0, 0, text[child.name][0].float))
-        s.suggestValue(child.width, text[child.name][0].float)
-        s.suggestValue(child.height, text[child.name][1].float)
-        s.addConstraint(child.width >= text[child.name][0].float)
-        s.addConstraint(child.height >= text[child.name][1].float)
-      elif images.hasKey(child.name):
         let
-          size = max(images[child.name][0], images[child.name][1]).float
-          strength = createStrength(1, 0, 0, size)
-        s.addEditVariable(child.width, strength)
-        s.addEditVariable(child.height, strength)
-        s.suggestValue(child.width, size)
-        s.suggestValue(child.height, size)
+          dimensionValue = (if p.orientation == Horizontal: text[child.name].w.float else: text[child.name].h.float)
+          otherDimensionValue = (if p.orientation == Horizontal: text[child.name].h.float else: text[child.name].w.float)
+        if child.constraints.len == 0:
+          s.addConstraint(dimension == dimensionValue)
+        child.failWithMessage("Unable to add text element"):
+          # This defaults text to be left aligned
+          var
+            dummySpacer = newVariable()
+            constraint = dummySpacer == 0
+          constraint.strength = createStrength(1.0, 0.0, 0.0, (depth + 1).float)
+          s.addConstraint constraint
+          s.addConstraint(otherDimension == otherDimensionValue + dummySpacer)
+      elif images.hasKey(child.name):
+        let dimensionValue = (if p.orientation == Horizontal: images[child.name].w.float else: images[child.name].h.float)
+        if child.constraints.len == 0:
+          s.addConstraint(dimension == dimensionValue)
         s.addConstraint(child.height*images[child.name][0].float == child.width*images[child.name][1].float)
     of Stack:
-      s.addStack(child, padding, text, images)
+      s.addStack(child, padding, text, images, depth + 1)
     of Spacer:
       if child.strict:
         if child.constraints.len == 0:
           s.addConstraint(dimension == padding.float)
       else:
         nonStrictSpacers.add dimension
+        var constraint = dimension == 0
+        constraint.strength = createStrength(1.0, 0.0, 0.0, depth.float)
+        s.addConstraint constraint
     for constraint in child.constraints:
-      if constraint.percentage:
-        case constraint.comparator:
-        of "==":
-          s.addConstraint(dimension == parentDimension * constraint.value.float / 100)
-        of "<=":
-          s.addConstraint(dimension <= parentDimension * constraint.value.float / 100)
-        of ">=":
-          s.addConstraint(dimension >= parentDimension * constraint.value.float / 100)
-      else:
-        case constraint.comparator:
-        of "==":
-          s.addConstraint(dimension == constraint.value.float)
-        of "<=":
-          s.addConstraint(dimension <= constraint.value.float)
-        of ">=":
-          s.addConstraint(dimension >= constraint.value.float)
+      child.failWithMessage("Unable to satisfy constraint"):
+        if constraint.percentage:
+          case constraint.comparator:
+          of "==":
+            s.addConstraint(parentDimension * constraint.value.float / 100 == dimension)
+          of "<=":
+            s.addConstraint(parentDimension * constraint.value.float / 100 >= dimension)
+          of ">=":
+            s.addConstraint(parentDimension * constraint.value.float / 100 <= dimension)
+        else:
+          case constraint.comparator:
+          of "==":
+            s.addConstraint(constraint.value.float == dimension)
+          of "<=":
+            s.addConstraint(constraint.value.float >= dimension)
+          of ">=":
+            s.addConstraint(constraint.value.float <= dimension)
     totalSize = totalSize + dimension
-    if p.orientation == Horizontal:
-      s.addConstraint(p.height == child.height)
-    else:
-      s.addConstraint(p.width == child.width)
   if nonStrictSpacers.len > 1:
     let first = nonStrictSpacers[0]
     for spacer in nonStrictSpacers[1..^1]:
       s.addConstraint(spacer == first)
-  if p.orientation == Horizontal:
-    s.addConstraint(p.width == totalSize)
-  else:
-    s.addConstraint(p.height == totalSize)
+  p.failWithMessage("Container too small for constraints"):
+    s.addConstraint(parentDimension == totalSize)
 
 proc parseLayout*(layout: string, w, h: tuple[opt: string, val: int], padding: int, text, images: Table[string, tuple[w: int, h: int]]): Pack =
   result = parse(layout)
-  #echo result
   var s = newSolver()
-  case w.opt:
-  of "==", "": s.addConstraint(result.width == w.val.float)
-  of "<=": s.addConstraint(result.width <= w.val.float)
-  of ">=": s.addConstraint(result.width >= w.val.float)
-  case h.opt:
-  of "==", "": s.addConstraint(result.height == h.val.float)
-  of "<=": s.addConstraint(result.height <= h.val.float)
-  of ">=": s.addConstraint(result.height >= h.val.float)
-  s.addStack(result, padding, text, images)
+  try:
+    s.addStack(result, padding, text, images, 0)
+  except LayoutDefect as e:
+    echo red e.msg
+    # TODO: Maybe add disclaimer about pattern being auto-expanded
+    echo result.toFormatLanguage(e.defective)
+    quit 1
+  try:
+    case w.opt:
+    of "==", "": s.addConstraint(result.width == w.val.float)
+    of "<=": s.addConstraint(result.width <= w.val.float)
+    of ">=": s.addConstraint(result.width >= w.val.float)
+    case h.opt:
+    of "==", "": s.addConstraint(result.height == h.val.float)
+    of "<=": s.addConstraint(result.height <= h.val.float)
+    of ">=": s.addConstraint(result.height >= h.val.float)
+  except ValueError:
+    echo red("Unable to fit pattern into given width/height (", w.opt, w.val, ", ", h.opt, h.val, ")")
+    echo red result.toFormatLanguage()
+    quit 1
   s.updateVariables()

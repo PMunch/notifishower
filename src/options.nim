@@ -34,6 +34,7 @@ Options:
   --<id>.text <text>                        Store a text element with a given ID
   --<id>.font <font>                        Set the font for a text element
   --<id>.color <color>                      Set the color for a text element
+  --<id>.background <color>                 Set the background color for an element
   --<id>.image <path>                       Store an image element with a given ID
   --<id>.ninepatch <path>                   Set the background of an element to a ninepatch
   --<id>.tile <bool>                        Set the tiling mode of the background ninepatch
@@ -114,7 +115,7 @@ Layout format:
   Constraints can be either a number or a number prefixed by ">=" or "<=" to
   specify if it's exact, or larger or greater than. It can also be a percentage
   postfixed by "%" which will be a percentage of the size of the containing
-  group.
+  group. All constraints apply to the direction of the parent container.
   To specify a width of a padding you can put a constraint in the middle of two
   "-" characters, for example '-10-', '->=20-', or '-5%-'.
   When using this format make sure that all your constraints are actually
@@ -256,7 +257,17 @@ proc parseColor(color: string): Color =
 
 proc parseCommandFile*(file: string, defaults: var Options = default(Options)): Options
 
-## TODO: Check that there is no collision between images and text
+template mgetOrDefault[A, B](t: var Table[A, B], key: A): var B =
+  t.mgetOrPut(key, default(typeof(B)))
+
+template globalOrLocal(global, local, field, action: untyped): untyped =
+  if capture.len == 2:
+    let value {.inject.} = capture[1].s
+    options.global = action
+  else:
+    let value {.inject.} = capture[2].s
+    options.local.mgetOrDefault($1).field = action
+
 let parser = peg(input, options: Options):
   input <- option * *("\x1F" * option) * !1
   option <- help | version | position | size | background | hover | border | borderwidth | text | font | image | monitor | format | name | class | textColor | ninepatch | tile | config | padding | timeout | action | hoverNinepatch | hoverTile | shortcut
@@ -290,13 +301,15 @@ let parser = peg(input, options: Options):
   padding <- "--padding" * "\x1F" * >positiveNumber:
     options.padding = parseInt($1)
   ninepatch <- "--" * ?(>identifier * '.') * "ninepatch\x1F" * >string:
-    if capture.len == 2: options.ninepatch = $1
-    else: options.backgrounds.mgetOrPut($1, Background()).ninepatch = $2
+    #if capture.len == 2: options.ninepatch = $1
+    #else: options.backgrounds.mgetOrPut($1, Background()).ninepatch = $2
+    globalOrLocal(ninepatch, backgrounds, ninepatch, value)
   config <- "--config\x1F" * >string:
     options = parseCommandFile($1, options)
   tile <- "--" * ?(>identifier * '.') * "tile\x1F" * >boolean:
-    if capture.len == 2: options.ninepatchTile = $1 == "true"
-    else: options.backgrounds.mgetOrPut($1, Background()).ninepatchTile = $2 == "true"
+    globalOrLocal(ninepatchTile, backgrounds, ninepatchTile, value == "true")
+    #if capture.len == 2: options.ninepatchTile = $1 == "true"
+    #else: options.backgrounds.mgetOrPut($1, Background()).ninepatchTile = $2 == "true"
   background <- "--" * ?(>identifier * '.') * "background\x1F" * >color:
     if capture.len == 2: options.background = parseColor($1)
     else: options.backgrounds.mgetOrPut($1, Background()).background = parseColor($2)
@@ -331,10 +344,18 @@ let parser = peg(input, options: Options):
   borderwidth <- "--border.width\x1F" * >positiveNumber:
     options.borderWidth = parseInt($1)
   text <- "--" * >identifier * ".text\x1F" * >string:
+    if options.images.hasKey($1):
+      echo "Error with --" & $1 & ".text " & $2
+      echo "An image with the given name already exists"
+      quit 1
     options.text.mgetOrPut($1, Text()).text = $2
   textColor <- "--" * >identifier * ".color\x1F" * >color:
     options.text.mgetOrPut($1, Text()).color = parseColor($2)
   image <- "--" * >identifier * ".image\x1F" * >string:
+    if options.text.hasKey($1):
+      echo "Error with --" & $1 & ".image " & $2
+      echo "A text with the given name already exists"
+      quit 1
     options.images.mgetOrPut($1, Image()).image = $2
   font <- "--" * ?(>identifier * '.') * "font\x1F" * >fontidentifier:
     if capture.len == 2: options.defaultFont = $1
@@ -354,7 +375,8 @@ let parser = peg(input, options: Options):
   number <- (?'-' * {'1'..'9'} * *Digit) | '0'
   positiveNumber <- ({'1'..'9'} * *Digit) | '0'
   identifier <- Alpha * *(Alnum | '_')
-  string <- *Print
+  #string <- *({'\0'..'\x1E'} | {'\x20'..'\xFF'})
+  string <- *(1-'\x1F')
   boolean <- "true" | "false"
   modifiers <- "ctrl" | "shift" | "lock" | "mod1" | "mod2" | "mod3" | "mod4" | "mod5"
   shortcutPattern <- *(modifiers * '+') * string
@@ -364,11 +386,13 @@ let parser = peg(input, options: Options):
   xrandrident <- +Print #UnquotStrChar
   color <- ?'#' * (Xdigit[8] | Xdigit[6])
   fontidentifier <- +nonslash * +(('/' * positiveNumber * &('\x1F' | !1)) | ('/' * +nonslash * &1 * &(!'\x1F')))
-  nonslash <- {0x21..0x2E, 0x30..0x7E}
+  nonslash <- {0x20..0x2E, 0x30..0x7E}
 
 proc parseCommandLine*(defaults: var Options = default(Options), opts = commandLineParams()): Options =
   result = defaults
-  let params = opts.join("\x1F")
+  var params = opts.join("\x1F")
+  if params.len == 0:
+    params = "--help"
   let match = parser.match(params, result)
   if not match.ok:
     echo "Unable to parse options:"

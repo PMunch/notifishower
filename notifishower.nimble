@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.2.0"
+version       = "0.4.0"
 author        = "PMunch"
 description   = "Simple program to show notifications with images and actions around the screen"
 license       = "MIT"
@@ -12,9 +12,9 @@ bin           = @["notifishower"]
 # Dependencies
 
 requires "nim >= 1.2.6"
-requires "docopt"
 requires "imlib2"
 requires "https://github.com/PMunch/x11#monitors"
 requires "npeg"
 requires "kiwi"
+requires "termstyle"
 #requires "x11"

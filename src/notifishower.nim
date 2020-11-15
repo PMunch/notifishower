@@ -298,8 +298,14 @@ template forEachElement(startX, startY: int, body: untyped): untyped =
       y {.inject.} = startY
     proc calculateStack(s: Pack, window {.inject.}: var WindowInformation) =
       for element {.inject.} in s.children:
+        when declared(drawStack):
+          imlib_context_set_image(buffer)
+          let color = element.color
+          imlib_context_set_color(color.red.cint, color.green.cint, color.blue.cint, 200)
+          imlib_image_fill_rectangle(x, y, element.width.value.int, element.height.value.int)
         case element.kind:
-        of Stack: element.calculateStack(window)
+        of Stack:
+          element.calculateStack(window)
         of Element:
           body
         of Spacer: discard
@@ -311,6 +317,11 @@ template forEachElement(startX, startY: int, body: untyped): untyped =
         x -= s.width.value.int
       else:
         y -= s.height.value.int
+    when declared(drawStack):
+      imlib_context_set_image(buffer)
+      let color = window.layout.color
+      imlib_context_set_color(color.red.cint, color.green.cint, color.blue.cint, 200)
+      imlib_image_fill_rectangle(x, y, window.layout.width.value.int, window.layout.height.value.int)
     window.layout.calculateStack(window)
 
 proc calculateHoverSection(mx, my: int, window: var WindowInformation) =
@@ -427,6 +438,7 @@ while true:
         imlib_image_fill_rectangle(window.hoverSection.x - up_x, window.hoverSection.y - up_y,
           window.hoverSection.w, window.hoverSection.h)
 
+      #var drawStack = true
       forEachElement(-up_x, -up_y):
         let
           w = element.width.value.int
@@ -453,13 +465,20 @@ while true:
         if texts.hasKey(element.name):
           var text = args.text[element.name].text
           if text.len > 0:
-            imlib_context_set_image(buffer)
+            var textBuffer = imlib_create_image(w, h)
+            imlib_context_set_image(textBuffer)
+            imlib_image_set_has_alpha(1)
+            imlib_image_clear()
             var font = imlib_load_font(args.text[element.name].font)
             imlib_context_set_font(font)
             let color = args.text[element.name].color
             imlib_context_set_color(color.r, color.g, color.b, color.a)
-            imlib_text_draw(x, y, text[0].addr)
+            imlib_text_draw(0, 0, text[0].addr)
             imlib_free_font()
+            imlib_context_set_image(buffer)
+            imlib_blend_image_onto_image(textBuffer, 255, 0, 0, w, h, x, y, w, h)
+            imlib_context_set_image(textBuffer)
+            imlib_free_image()
 
       # don't blend the image onto the drawable - slower
       imlib_context_set_blend(0)
