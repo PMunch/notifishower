@@ -1,5 +1,22 @@
+![Notificatcher logo](https://github.com/PMunch/notificatcher/blob/master/notificatcher.png)
+
+Ever wanted to just display some information on the screen in your custom Linux
+environment. Or just have full control over your notifications? Then this is
+the tool for you!
+
+# What is notifishower?
+Notifishower is a simple program to display a combination of text and images as
+a notification on the screen. The goal is to be as flexible as absolutely
+possible, with layouts defined in a EVFL-like formatting language and full
+ninepatch support for the background and elements. It also supports clickable
+elements and keyboard shortcuts. It does not read freedesktop notifications
+however, for that you might want to check out notificatcher.
+
+# Sounds cool, how do I use it?
+Easiest way to figure it out is by checking out the help message:
+
 ```
-Notifishower 0.3.0
+Notifishower 0.4.0
 
 This is a simple program to display a combinations of text and images as a
 notification on the screen. It does not read freedesktop notifications, for
@@ -30,6 +47,7 @@ Options:
   --<id>.text <text>                        Store a text element with a given ID
   --<id>.font <font>                        Set the font for a text element
   --<id>.color <color>                      Set the color for a text element
+  --<id>.background <color>                 Set the background color for an element
   --<id>.image <path>                       Store an image element with a given ID
   --<id>.ninepatch <path>                   Set the background of an element to a ninepatch
   --<id>.tile <bool>                        Set the tiling mode of the background ninepatch
@@ -110,7 +128,7 @@ Layout format:
   Constraints can be either a number or a number prefixed by ">=" or "<=" to
   specify if it's exact, or larger or greater than. It can also be a percentage
   postfixed by "%" which will be a percentage of the size of the containing
-  group.
+  group. All constraints apply to the direction of the parent container.
   To specify a width of a padding you can put a constraint in the middle of two
   "-" characters, for example '-10-', '->=20-', or '-5%-'.
   When using this format make sure that all your constraints are actually
