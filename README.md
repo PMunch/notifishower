@@ -1,4 +1,4 @@
-![Notificatcher logo](https://github.com/PMunch/notificatcher/blob/master/notificatcher.png)
+![Notifishower logo](https://github.com/PMunch/notifishower/blob/master/notifishower.png)
 
 Ever wanted to just display some information on the screen in your custom Linux
 environment. Or just have full control over your notifications? Then this is
