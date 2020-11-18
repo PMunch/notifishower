@@ -16,7 +16,7 @@ however, for that you might want to check out notificatcher.
 Easiest way to figure it out is by checking out the help message:
 
 ```
-Notifishower 0.4.0
+Notifishower 0.5.0
 
 This is a simple program to display a combinations of text and images as a
 notification on the screen. It does not read freedesktop notifications, for
@@ -65,8 +65,11 @@ Positions and widths:
   X and Y positions can be the position on the monitor to display the
   notification, if you pass a negative number it will be placed that many pixels
   minus one away from the right or bottom. The minus one is because -0 isn't a
-  valid number for the parser so -1 is the same as 0 pixels from the edge.
-  Width and height are can also be negative, and it means screen width minus
+  valid number for the parser so -1 is the same as 0 pixels from the edge. In
+  addition you can use center+/-<number> to center the notification in the x or
+  y direction. Passing center+0 for both x and y should put the center of the
+  notification in the center of your screen.
+  Width and height can also be negative, and it means screen width minus
   that amount. For width and height you're also able to define >= or <=
   constraints so -w >=100 would set the minimal size of the notification to
   100 but otherwise scale it larger.
