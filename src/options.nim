@@ -52,8 +52,11 @@ Positions and widths:
   X and Y positions can be the position on the monitor to display the
   notification, if you pass a negative number it will be placed that many pixels
   minus one away from the right or bottom. The minus one is because -0 isn't a
-  valid number for the parser so -1 is the same as 0 pixels from the edge.
-  Width and height are can also be negative, and it means screen width minus
+  valid number for the parser so -1 is the same as 0 pixels from the edge. In
+  addition you can use center+/-<number> to center the notification in the x or
+  y direction. Passing center+0 for both x and y should put the center of the
+  notification in the center of your screen.
+  Width and height can also be negative, and it means screen width minus
   that amount. For width and height you're also able to define >= or <=
   constraints so -w >=100 would set the minimal size of the notification to
   100 but otherwise scale it larger.
@@ -189,6 +192,8 @@ Managing notifications:
 
 type
   Monitor* = object
+    xCenterRelative*: bool
+    yCenterRelative*: bool
     x*, y*, w*, h*: int
   Hover* = object
     action*: string
@@ -213,6 +218,8 @@ type
   Options* = object
     wopt*: string
     hopt*: string
+    xCenterRelative*: bool
+    yCenterRelative*: bool
     x*, y*, w*, h*: int
     background*, border*, hover*: Color
     borderWidth*: int
@@ -239,9 +246,11 @@ proc hash*(x: Shortcut): Hash =
   result = !$h
 
 template monitorSetValues(i: int) =
-  if capture[i+1].s == ",":
-    monitor.x = parseInt capture[i].s
-    monitor.y = parseInt capture[i+2].s
+  if capture[i+2].s == ",":
+    monitor.xCenterRelative = capture[i].s.startsWith("center")
+    monitor.yCenterRelative = capture[i+3].s.startsWith("center")
+    monitor.x = parseInt capture[i+1].s
+    monitor.y = parseInt capture[i+4].s
   else:
     monitor.w = parseInt capture[i].s
     monitor.h = parseInt capture[i+2].s
@@ -278,18 +287,25 @@ let parser = peg(input, options: Options):
   version <- ("--version" | "-v"):
     echo version
     quit 0
-  monitor <- "--monitor\x1F" * >xrandrident * ?("\x1F" * >number * >',' * ?'\x1F' * >number) * ?("\x1F" * >number * >':' * ?'\x1F' * >number):
+  monitor <- "--monitor\x1F" * >xrandrident * ?("\x1F" * >(?("center+" | "center")) * >number * >',' * ?'\x1F' * >(?("center+" | "center")) * >number) * ?("\x1F" * >number * >':' * ?'\x1F' * >number):
     var monitor = Monitor(x: int.high, y: int.high, w: int.high, h: int.high)
-    if capture.len == 5:
+    if capture.len == 7:
       monitorSetValues(2)
-    if capture.len == 8:
+    if capture.len == 10:
       monitorSetValues(2)
-      monitorSetValues(5)
+      monitorSetValues(7)
     options.monitors[$1] = monitor
-  position <- "-" * >("x" | "y") * "\x1F" * >number:
+  position <- "-" * >("x" | "y") * "\x1F" * ?(>("center+" | "center")) * >number:
+    let value = parseInt(if capture.len == 4: $3 else: $2)
     case $1:
-    of "x": options.x = parseInt($2)
-    of "y": options.y = parseInt($2)
+    of "x":
+      if capture.len == 4:
+        options.xCenterRelative = true
+      options.x = value
+    of "y":
+      if capture.len == 4:
+        options.yCenterRelative = true
+      options.y = value
   size <- "-" * >("w" | "h") * "\x1F" * >?comparator * >number:
     case $1:
     of "w":

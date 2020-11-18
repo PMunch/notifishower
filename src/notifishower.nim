@@ -231,11 +231,40 @@ for screen in screens:
         if args.monitors.hasKey(screen.name) and args.monitors[screen.name].h != int.high:
           args.monitors[screen.name].h
         else: args.h
+      xCenterRelative =
+        if args.monitors.hasKey(screen.name) and args.monitors[screen.name].xCenterRelative:
+          true
+        else: args.xCenterRelative
+      yCenterRelative =
+        if args.monitors.hasKey(screen.name) and args.monitors[screen.name].yCenterRelative:
+          true
+        else: args.yCenterRelative
       winWidth = if width < 0: screen.w + width else: width
       winHeight = if height < 0: screen.h + height else: height
-      layout = parseLayout(args.format, (args.wopt, winWidth), (args.hopt, winHeight), args.padding, texts, images)
-      xpos = screen.x + (if xinput < 0: screen.w - layout.width.value.int - borderWidth*2 + xinput + 1 else: xinput)
-      ypos = screen.y + (if yinput < 0: screen.h - layout.height.value.int - borderWidth*2 + yinput + 1 else: yinput)
+    var layout = parseLayout(args.format, (args.wopt, winWidth), (args.hopt, winHeight), args.padding, texts, images)
+    if args.ninepatch.len != 0 and bgNinepatch.tile:
+      let
+        cwidth = layout.width.value.int - bgNinepatch.startTileX - bgNinepatch.endTileX
+        cheight = layout.height.value.int - bgNinepatch.startTileY - bgNinepatch.endTileY
+      var
+        nwidth = layout.width.value.int + (bgNinepatch.tileStepX - (cwidth mod bgNinepatch.tileStepX))
+        nheight = layout.height.value.int + (bgNinepatch.tileStepY - (cheight mod bgNinepatch.tileStepY))
+      case args.wopt:
+      of "==": nwidth = layout.width.value.int
+      of "<=": nwidth = min(winWidth, nwidth)
+      of ">=": nwidth = max(winWidth, nwidth)
+      case args.hopt:
+      of "==": nheight = layout.height.value.int
+      of "<=": nheight = min(winHeight, nheight)
+      of ">=": nheight = max(winHeight, nheight)
+      layout = parseLayout(args.format, ("==", nwidth), ("==", nheight), args.padding, texts, images)
+    let
+      xpos = screen.x + (if xCenterRelative: (screen.w div 2 - borderWidth - (layout.width.value.int div 2) + xinput)
+        else: (if xinput < 0: screen.w - layout.width.value.int - borderWidth*2 + xinput + 1 else: xinput)
+      )
+      ypos = screen.y + (if yCenterRelative: (screen.h div 2 - borderWidth - (layout.height.value.int div 2) + yinput)
+        else: (if yinput < 0: screen.h - layout.height.value.int - borderWidth*2 + yinput + 1 else: yinput)
+      )
       win = XCreateWindow(disp, DefaultRootWindow(disp), xpos, ypos, layout.width.value.int,
         layout.height.value.int, borderWidth, vinfo.depth, InputOutput, vinfo.visual,
         CWOverrideRedirect or CWBackPixmap or CWBackPixel or CWBorderPixel or

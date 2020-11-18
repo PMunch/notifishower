@@ -11,6 +11,13 @@ type
     widths: array[3, cint]
     heights: array[3, cint]
 
+template tileStepX*(np: Ninepatch): int = np.widths[1]
+template tileStepY*(np: Ninepatch): int = np.heights[1]
+template startTileX*(np: Ninepatch): int = np.widths[0]
+template startTileY*(np: Ninepatch): int = np.heights[0]
+template endTileX*(np: Ninepatch): int = np.widths[2]
+template endTileY*(np: Ninepatch): int = np.heights[2]
+
 proc imlib_load_ninepatch*(path: string): Ninepatch =
   let black = ImlibColor(alpha: 255, red: 0, green: 0, blue: 0)
   var ninepatch = imlib_load_image(path)
