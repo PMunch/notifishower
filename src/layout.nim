@@ -12,19 +12,32 @@ type
     of Element:
       name*: string
     of Stack:
+      stackName*: string
       orientation*: Orientation
       children*: seq[Pack]
     of Spacer:
       strict: bool
+  ConstraintKind = enum Value, Relative
   Constraint = object
     comparator: string
-    value: int
-    percentage: bool
+    case kind: ConstraintKind
+    of Value:
+      percentage: bool
+      value: int
+    of Relative:
+      element: string
   ParseState = object
     stack: seq[Pack]
     constraints: Table[string, Constraint]
+    elements: Table[string, Pack]
   LayoutDefect = object of Defect
     defective: Pack
+
+template basePack(state: ParseState): Pack =
+  state.stack[0].children[0]
+
+template `basePack=`(state: ParseState, base: Pack) =
+  state.stack[0].children[0] = base
 
 proc `toFormatLanguage`*(p: Pack, highlight: Pack = nil): string =
   if p == highlight:
@@ -44,7 +57,7 @@ proc `toFormatLanguage`*(p: Pack, highlight: Pack = nil): string =
   if p.constraints.len != 0:
     for constraint in p.constraints:
       result.add (if p.kind != Spacer: ":" else: "") & (if constraint.comparator == "==": "" else: constraint.comparator) &
-        $constraint.value & (if constraint.percentage: "%" else: "")
+        (if constraint.kind == Value: $constraint.value else: constraint.element) & (if constraint.kind == Value and constraint.percentage: "%" else: "")
       if p.kind == Spacer:
         result.add "-"
   if p == highlight:
@@ -91,32 +104,47 @@ proc constrain(pack: var Pack, constraints: varargs[Constraint]) =
 proc last[T](x: var seq[T]): var T =
   x[x.high]
 
+template handleStack(): untyped =
+  if capture[1].s.len > 0:
+    let name = capture[1].s[0..^2]
+    ps.stack.last.children.last.stackName = name
+    ps.elements[name] = ps.stack.last.children.last
+  if capture.len > 2:
+    ps.stack.last.children.last.constrain ps.constraints[capture[2].s]
+
 let
   parser = peg(outer, ps: ParseState):
     outer <- (outerHorizontal | outerVertical) * !1
     stack <- (horizontal | vertical) * *' '
     outerHorizontal <- startHorizontal * children * stopHorizontal
     outerVertical <- startVertical * children * stopVertical
-    horizontal <- outerHorizontal * ?(':' * >constraint):
-      if capture.len > 1:
-        ps.stack.last.children.last.constrain ps.constraints[$1]
-    vertical <- outerVertical * ?(':' * >constraint):
-      if capture.len > 1:
-        ps.stack.last.children.last.constrain ps.constraints[$1]
+    horizontal <- >?(identifier * '=') * outerHorizontal * ?(':' * >constraint):
+      handleStack()
+    vertical <- >?(identifier * '=') * outerVertical * ?(':' * >constraint):
+      handleStack()
     elements <- element * *(+' ' * element)
     children <- ?spacer * +((stack | (element * *' ')) * ?spacer)
-    constraint <- >?(">=" | "<=") * >positiveNumber * >?'%':
-      ps.constraints[$0] = Constraint(
-        comparator: if len($1) == 0: "==" else: $1,
-        value: parseInt($2),
-        percentage: $3 == "%"
-      )
+    constraint <- >?(">=" | "<=") * ((>positiveNumber * >?'%') | >identifier):
+      try:
+        let value = parseInt($2)
+        ps.constraints[$0] = Constraint(
+          kind: Value,
+          comparator: if len($1) == 0: "==" else: $1,
+          value: value,
+          percentage: $3 == "%"
+        )
+      except ValueError:
+        ps.constraints[$0] = Constraint(
+          kind: Relative,
+          comparator: if len($1) == 0: "==" else: $1,
+          element: $2
+        )
     element <- >identifier * ?(':' * >constraint):
-      # TODO: Verify elements in list of defined elements
       var element = newElement($1)
       if capture.len > 2:
         element.constrain ps.constraints[$2]
       ps.stack.last.children.add element
+      ps.elements[$1] = element
     spacer <- *' ' * (strictSpacer | softSpacer) * *' '
     softSpacer <- '~':
       ps.stack.last.children.add newSpacer(false)
@@ -138,14 +166,13 @@ let
       let n = ps.stack.pop
       ps.stack.last.children.add n
 
-proc parse(x: string): Pack =
+proc parse(x: string): ParseState =
   var
     ps = ParseState(stack: @[newStack(Vertical)])
     match = parser.match(x, ps)
   if match.ok:
-    # TODO: Verify that ps is good
     if ps.stack.len == 1 and ps.stack[0].children.len == 1:
-      return ps.stack[0].children[0]
+      return ps #.stack[0].children[0]
     else:
       echo "Parser returned illegal state"
       quit 1
@@ -178,8 +205,9 @@ template failWithMessage(child: Pack, message: string, action: untyped): untyped
     defect.defective = child
     raise defect
 
-proc addStack(s: Solver, p: Pack, padding: int, text, images: Table[string, tuple[w: int, h: int]], depth: int) =
+proc addStack(s: Solver, ps: ParseState, padding: int, text, images: Table[string, tuple[w: int, h: int]], depth: int) =
   # TODO: add more failWithMessage statements for better debugging
+  let p = ps.basePack
   var totalSize = newExpression(0)
   var nonStrictSpacers: seq[Variable]
   let
@@ -207,15 +235,19 @@ proc addStack(s: Solver, p: Pack, padding: int, text, images: Table[string, tupl
             dummySpacer = newVariable()
             constraint = dummySpacer == 0
           constraint.strength = createStrength(1.0, 0.0, 0.0, (depth + 1).float)
+          s.addConstraint(dummySpacer >= 0)
           s.addConstraint constraint
           s.addConstraint(otherDimension == otherDimensionValue + dummySpacer)
       elif images.hasKey(child.name):
         let dimensionValue = (if p.orientation == Horizontal: images[child.name].w.float else: images[child.name].h.float)
         if child.constraints.len == 0:
           s.addConstraint(dimension == dimensionValue)
-        s.addConstraint(child.height*images[child.name][0].float == child.width*images[child.name][1].float)
+        child.failWithMessage("Unable to keep aspect ratio while scaling"):
+          s.addConstraint(child.height*images[child.name][0].float == child.width*images[child.name][1].float)
     of Stack:
-      s.addStack(child, padding, text, images, depth + 1)
+      var dummyParseState = ps
+      dummyParseState.basePack = child
+      s.addStack(dummyParseState, padding, text, images, depth + 1)
     of Spacer:
       if child.strict:
         if child.constraints.len == 0:
@@ -227,38 +259,58 @@ proc addStack(s: Solver, p: Pack, padding: int, text, images: Table[string, tupl
         s.addConstraint constraint
     for constraint in child.constraints:
       child.failWithMessage("Unable to satisfy constraint"):
-        if constraint.percentage:
+        case constraint.kind:
+        of Value:
+          if constraint.percentage:
+            case constraint.comparator:
+            of "==":
+              s.addConstraint(parentDimension * constraint.value.float / 100 == dimension)
+            of "<=":
+              s.addConstraint(parentDimension * constraint.value.float / 100 >= dimension)
+            of ">=":
+              s.addConstraint(parentDimension * constraint.value.float / 100 <= dimension)
+          else:
+            case constraint.comparator:
+            of "==":
+              s.addConstraint(constraint.value.float == dimension)
+            of "<=":
+              s.addConstraint(constraint.value.float >= dimension)
+            of ">=":
+              s.addConstraint(constraint.value.float <= dimension)
+        of Relative:
+          let constraintDimension =
+            if p.orientation == Horizontal:
+              ps.elements[constraint.element].width
+            else: ps.elements[constraint.element].height
           case constraint.comparator:
           of "==":
-            s.addConstraint(parentDimension * constraint.value.float / 100 == dimension)
+            s.addConstraint(constraintDimension == dimension)
           of "<=":
-            s.addConstraint(parentDimension * constraint.value.float / 100 >= dimension)
+            s.addConstraint(constraintDimension >= dimension)
           of ">=":
-            s.addConstraint(parentDimension * constraint.value.float / 100 <= dimension)
-        else:
-          case constraint.comparator:
-          of "==":
-            s.addConstraint(constraint.value.float == dimension)
-          of "<=":
-            s.addConstraint(constraint.value.float >= dimension)
-          of ">=":
-            s.addConstraint(constraint.value.float <= dimension)
+            s.addConstraint(constraintDimension <= dimension)
     totalSize = totalSize + dimension
   if nonStrictSpacers.len > 1:
     let first = nonStrictSpacers[0]
     for spacer in nonStrictSpacers[1..^1]:
       s.addConstraint(spacer == first)
-  p.failWithMessage("Container too small for constraints"):
+  p.failWithMessage("Container too small or big for constraints"):
     s.addConstraint(parentDimension == totalSize)
 
 proc parseLayout*(layout: string, w, h: tuple[opt: string, val: int], padding: int, text, images: Table[string, tuple[w: int, h: int]]): Pack =
-  result = parse(layout)
+  var parseState = parse(layout)
+  result = parseState.basePack
+  for key, element in parseState.elements.pairs:
+    if element.kind == Element:
+      if not text.hasKey(key) and not images.hasKey(key):
+        echo red "Element \"" & key & "\" in pattern not given any text or image"
+        echo result.toFormatLanguage(element)
+        quit 1
   var s = newSolver()
   try:
-    s.addStack(result, padding, text, images, 0)
+    s.addStack(parseState, padding, text, images, 0)
   except LayoutDefect as e:
     echo red e.msg
-    # TODO: Maybe add disclaimer about pattern being auto-expanded
     echo result.toFormatLanguage(e.defective)
     quit 1
   try:

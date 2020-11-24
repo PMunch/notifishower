@@ -1,4 +1,4 @@
-import os, tables, selectors
+import os, tables, selectors, macros
 import layout, options, ninepatch
 import imlib2
 import times
@@ -22,8 +22,9 @@ args.h = 0
 args.hopt = ">="
 args.defaultFont = "DejaVuSans/10"
 args.format = "(-[~icon:32~]-[~title body~]-)"
-args.text["title"] = Text(font: "DejaVuSans/12", color: Color(r: 255, g: 255, b: 255, a: 255))
-args.text["body"] = Text(color: Color(r: 255, g: 255, b: 255, a: 255))
+args.text["title"] = Text(font: "DejaVuSans/12")
+args.text["body"] = Text()
+args.defaultColor = Color(r: 255, g: 255, b: 255, a: 255)
 args.images["icon"] = Image()
 args.padding = 8
 args = parseCommandLine(defaults = args)
@@ -320,13 +321,16 @@ proc inRect(x, y, rx, ry, rw, rh: int): bool =
   else:
     false
 
-template forEachElement(startX, startY: int, body: untyped): untyped =
+template forEachElement(startX, startY: int, elementBody: untyped, stackBody: untyped): untyped =
   block:
     var
       x {.inject.} = startX
       y {.inject.} = startY
     proc calculateStack(s: Pack, window {.inject.}: var WindowInformation) =
       for element {.inject.} in s.children:
+        let
+          w {.inject.} = element.width.value.int
+          h {.inject.} = element.height.value.int
         when declared(drawStack):
           imlib_context_set_image(buffer)
           let color = element.color
@@ -334,9 +338,10 @@ template forEachElement(startX, startY: int, body: untyped): untyped =
           imlib_image_fill_rectangle(x, y, element.width.value.int, element.height.value.int)
         case element.kind:
         of Stack:
+          stackBody
           element.calculateStack(window)
         of Element:
-          body
+          elementBody
         of Spacer: discard
         if s.orientation == Horizontal:
           x += element.width.value.int
@@ -355,13 +360,13 @@ template forEachElement(startX, startY: int, body: untyped): untyped =
 
 proc calculateHoverSection(mx, my: int, window: var WindowInformation) =
   reset window.hoverSection
-  forEachElement(0, 0):
+  template checkElement(name: untyped): untyped =
     var
       action = args.hoverables.getOrDefault(element.name).action
       color = args.hoverables.getOrDefault(element.name).color
     if color.r == 0 and color.b == 0 and color.g == 0 and color.a == 0:
       color = args.hover
-    if action != "" and
+    if action.len > 0 and
       inRect(mx, my, x, y, element.width.value.int, element.height.value.int):
       window.hoverSection =
         HoverSection(x: x, y: y,
@@ -369,6 +374,10 @@ proc calculateHoverSection(mx, my: int, window: var WindowInformation) =
           element: element.name,
           action: action,
           color: color)
+  forEachElement(0, 0):
+    checkElement(name)
+  do:
+    checkElement(stackName)
 
 while true:
   if XPending(disp) == 0: # If we don't have any XEvents, make sure we don't wait further than our timeout
@@ -416,6 +425,7 @@ while true:
     of ButtonRelease:
       let action = windows[ev.xbutton.window].hoverSection.action
       if action != "":
+        # TODO: Implement format string so position of click can be output
         stdout.write action
         quit 0
     of KeyPress:
@@ -469,9 +479,6 @@ while true:
 
       #var drawStack = true
       forEachElement(-up_x, -up_y):
-        let
-          w = element.width.value.int
-          h = element.height.value.int
         if args.backgrounds.hasKey(element.name) and window.hoverSection.element != element.name:
           imlib_context_set_image(buffer)
           if backgroundPatches.hasKey(element.name):
@@ -501,13 +508,28 @@ while true:
             var font = imlib_load_font(args.text[element.name].font)
             imlib_context_set_font(font)
             let color = args.text[element.name].color
-            imlib_context_set_color(color.r, color.g, color.b, color.a)
+            if color == default(Color):
+              imlib_context_set_color(args.defaultColor.r, args.defaultColor.g, args.defaultColor.b, args.defaultColor.a)
+            else:
+              imlib_context_set_color(color.r, color.g, color.b, color.a)
             imlib_text_draw(0, 0, text[0].addr)
             imlib_free_font()
             imlib_context_set_image(buffer)
             imlib_blend_image_onto_image(textBuffer, 255, 0, 0, w, h, x, y, w, h)
             imlib_context_set_image(textBuffer)
             imlib_free_image()
+      do:
+        if element.stackName.len > 0:
+          if args.backgrounds.hasKey(element.stackName) and window.hoverSection.element != element.stackName:
+            imlib_context_set_image(buffer)
+            if backgroundPatches.hasKey(element.stackName):
+              let patch = backgroundPatches[element.stackName]
+              imlib_ninepatch_draw(patch, x - patch.startDX, y - patch.startDY,
+                w + patch.startDX + patch.dwidth, h + patch.startDY + patch.dheight)
+            else:
+              let color = args.backgrounds[element.stackName].background
+              imlib_context_set_color(color.r, color.g, color.b, color.a);
+              imlib_image_fill_rectangle(x, y, w, h)
 
       # don't blend the image onto the drawable - slower
       imlib_context_set_blend(0)

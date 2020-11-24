@@ -16,7 +16,7 @@ however, for that you might want to check out notificatcher.
 Easiest way to figure it out is by checking out the help message:
 
 ```
-Notifishower 0.5.0
+Notifishower 0.6.0
 
 This is a simple program to display a combinations of text and images as a
 notification on the screen. It does not read freedesktop notifications, for
@@ -35,6 +35,7 @@ Options:
   -y <y>                                    Set the y position of the notification [default: 0]
   -w <w>                                    Set the width of the notification [default: 200]
   -h <h>                                    Set the height of the notification [default: 100]
+  --color <color>                           Set the default colour of all text
   --background <color>                      Set the background colour of the notification
   --hover <color>                           Set the default colour of the hover indicator
   --border <color>                          Set the border colour of the notification
@@ -113,12 +114,13 @@ Layout format:
   In order to give you the ultimate configuration ability notifishower
   implements a fairly simple visual formatting language. It features the
   following grammar elements:
-    []      <- A group of vertical elements
-    ()      <- A group of horizontal elements
-    -       <- A bit of padding
-    ~       <- An expanding bit of padding
-    <label> <- An item that will be laid out
-    :       <- The start of a constraint
+    []       <- A group of vertical elements
+    ()       <- A group of horizontal elements
+    -        <- A bit of padding
+    ~        <- An expanding bit of padding
+    <label>  <- An item that will be laid out
+    <label>= <- Prefaces a group to name it
+    :        <- The start of a constraint
   The default pattern is:
     (-[~icon:32~]-[~title body~]-)
   Which means a horizontal stack with padding before, after, and between two
@@ -128,26 +130,28 @@ Layout format:
   to match). The second sub-group contains the "title" and "body" without
   padding between them and centered vertically in the group.
   The labels are defined by the --<id>.text and --<id>.image options.
-  Constraints can be either a number or a number prefixed by ">=" or "<=" to
-  specify if it's exact, or larger or greater than. It can also be a percentage
-  postfixed by "%" which will be a percentage of the size of the containing
-  group. All constraints apply to the direction of the parent container.
-  To specify a width of a padding you can put a constraint in the middle of two
-  "-" characters, for example '-10-', '->=20-', or '-5%-'.
+  Constraints can be either a number or a label, optinonally prefixed by ">=" or
+  "<=" to specify if it's exact, or larger or greater than. When a constraint is
+  an element it constrains the size of this element in relation to that element.
+  It can also be a percentage postfixed by "%" which will be a percentage of the
+  size of the containing group. All constraints apply to the direction of the
+  parent container.  To specify a width of a padding you can put a constraint in
+  the middle of two "-" characters, for example '-10-', '->=20-', or '-5%-'.
   When using this format make sure that all your constraints are actually
   achievable, if not a notification will not be shown. Also make sure that you
   have sufficient expanding padding regions to take up any remaining space in
   the layout.
 
 Clickable elements:
-  Elements can be made clickable by assigned them an action. This is done by
+  Elements can be made clickable by assigning them an action. This is done by
   passing --<id>.action. When an element that has an action is clicked it will
   write the action to stdout and close the notification. When an element that
   has an action is hovered by the mouse it will paint a rectangle underneath
   itself in either the default hover color or the color defined with
   --<id>.hover. If you want to add a ninepatch image instead as the hover
   background you can use --<id>.hover.ninepatch and --<id>.hover.tile to
-  specify the image and the tiling mode.
+  specify the image and the tiling mode. If a group is named that entire group
+  can also be made clickable in the same way as elements.
 
 Shortcuts:
   Elements with an action can also be assigned a shortcut. You can pass
@@ -181,6 +185,7 @@ Configuration file:
   format is simply options without the preceding dashes, followed by a colon,
   and the value as bash would parse it. This is how the default.conf file
   appears and contains all the default parameters:
+    color: #FFFFFF
     background: #444444
     border: #808080
     border.width: 2
@@ -191,8 +196,6 @@ Configuration file:
     font: DejaVuSans/10
     format: (-[~icon:32~]-[~title body~]-)
     title.font: DejaVuSans/12
-    title.color: #FFFFFF
-    body.color: #FFFFFF
 
 Managing notifications:
   By default notifishower doesn't have any keyboard shortcuts to close the
