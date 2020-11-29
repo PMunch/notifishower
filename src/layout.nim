@@ -4,6 +4,11 @@ import termstyle
 type
   PackingKind* = enum Element, Stack, Spacer
   Orientation* = enum Horizontal, Vertical
+  Layout* = ref object
+    s: Solver
+    pack*: Pack
+    width: kiwi.Constraint
+    height: kiwi.Constraint
   Pack* = ref object
     width*, height*: Variable
     color*: tuple[red, green, blue: uint8]
@@ -153,7 +158,7 @@ let
       if capture.len > 1:
         spacer.constrain ps.constraints[$1]
       ps.stack.last.children.add spacer
-    positiveNumber <- {'1'..'9'} * *Digit
+    positiveNumber <- ({'1'..'9'} * *Digit) | '0'
     identifier <- Alpha * *(Alnum | '_')
     startHorizontal <- '(':
       ps.stack.add newStack(Horizontal)
@@ -242,7 +247,7 @@ proc addStack(s: Solver, ps: ParseState, padding: int, text, images: Table[strin
         let dimensionValue = (if p.orientation == Horizontal: images[child.name].w.float else: images[child.name].h.float)
         if child.constraints.len == 0:
           s.addConstraint(dimension == dimensionValue)
-        child.failWithMessage("Unable to keep aspect ratio while scaling"):
+        child.failWithMessage("Unable to keep aspect ratio"):
           s.addConstraint(child.height*images[child.name][0].float == child.width*images[child.name][1].float)
     of Stack:
       var dummyParseState = ps
@@ -297,33 +302,57 @@ proc addStack(s: Solver, ps: ParseState, padding: int, text, images: Table[strin
   p.failWithMessage("Container too small or big for constraints"):
     s.addConstraint(parentDimension == totalSize)
 
-proc parseLayout*(layout: string, w, h: tuple[opt: string, val: int], padding: int, text, images: Table[string, tuple[w: int, h: int]]): Pack =
+proc parseLayout*(layout: string, w, h: tuple[opt: string, val: int], padding: int, text, images: Table[string, tuple[w: int, h: int]]): Layout =
   var parseState = parse(layout)
-  result = parseState.basePack
+  new result
+  result.pack = parseState.basePack
   for key, element in parseState.elements.pairs:
     if element.kind == Element:
       if not text.hasKey(key) and not images.hasKey(key):
         echo red "Element \"" & key & "\" in pattern not given any text or image"
-        echo result.toFormatLanguage(element)
+        echo result.pack.toFormatLanguage(element)
         quit 1
   var s = newSolver()
   try:
     s.addStack(parseState, padding, text, images, 0)
   except LayoutDefect as e:
     echo red e.msg
-    echo result.toFormatLanguage(e.defective)
+    echo result.pack.toFormatLanguage(e.defective)
     quit 1
   try:
     case w.opt:
-    of "==", "": s.addConstraint(result.width == w.val.float)
-    of "<=": s.addConstraint(result.width <= w.val.float)
-    of ">=": s.addConstraint(result.width >= w.val.float)
+    of "==", "": result.width = result.pack.width == w.val.float
+    of "<=": result.width = result.pack.width <= w.val.float
+    of ">=": result.width = result.pack.width >= w.val.float
     case h.opt:
-    of "==", "": s.addConstraint(result.height == h.val.float)
-    of "<=": s.addConstraint(result.height <= h.val.float)
-    of ">=": s.addConstraint(result.height >= h.val.float)
+    of "==", "": result.height = result.pack.height == h.val.float
+    of "<=": result.height = result.pack.height <= h.val.float
+    of ">=": result.height = result.pack.height >= h.val.float
+    s.addConstraint result.width
+    s.addConstraint result.height
   except ValueError:
     echo red("Unable to fit pattern into given width/height (", w.opt, w.val, ", ", h.opt, h.val, ")")
-    echo red result.toFormatLanguage()
+    echo red result.pack.toFormatLanguage()
     quit 1
   s.updateVariables()
+  result.s = s
+
+proc updateLayout*(l: Layout, w, h: tuple[opt: string, val: int]) =
+  l.s.removeConstraint l.width
+  l.s.removeConstraint l.height
+  try:
+    case w.opt:
+    of "==", "": l.width = l.pack.width == w.val.float
+    of "<=": l.width = l.pack.width <= w.val.float
+    of ">=": l.width = l.pack.width >= w.val.float
+    case h.opt:
+    of "==", "": l.height = l.pack.height == h.val.float
+    of "<=": l.height = l.pack.height <= h.val.float
+    of ">=": l.height = l.pack.height >= h.val.float
+    l.s.addConstraint l.width
+    l.s.addConstraint l.height
+  except ValueError:
+    echo red("Unable to fit pattern into given width/height (", w.opt, w.val, ", ", h.opt, h.val, ")")
+    echo red l.pack.toFormatLanguage()
+    quit 1
+  l.s.updateVariables()

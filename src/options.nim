@@ -18,6 +18,9 @@ Options:
   --config <file>                           Parses options from the config file
   --class <class>                           Set the window class [default: notishower]
   --name <name>                             Set the window name [default: Notishower]
+  --icon <file>                             Set the window icon
+  --mode <mode>                             Decides the mode of the X11 window [default: notification]
+  --edge <edge>                             The side on which to attach the dock when in docking mode
   -x <x>                                    Set the x position of the notification [default: 0]
   -y <y>                                    Set the y position of the notification [default: 0]
   -w <w>                                    Set the width of the notification [default: 200]
@@ -48,6 +51,17 @@ Options:
   --format <format>                         Sets the layout of the notification
   --padding <number>                        The default padding for '-' in a pattern
   --timeout <number>                        Close the notification after a number of seconds
+
+Mode:
+  Notifishower was originally made to show notifications on screen. However its
+  customisability quickly led it to be useful for other things. With the mode
+  switch you are able to tell notifishower to display in different modes. The
+  mode can be one of "notification", "desktop", "window", or "dock".
+  Notification is the default, and will show a borderless window that
+  draws on top of everything else. Desktop does the same, but draws underneath
+  all other windows, effectively acting as a desktop widget. Window is a
+  typical window, and is under full control of the WM. And finally dock will
+  request an edge of the monitor where windows don't show and display there.
 
 Positions and widths:
   X and Y positions can be the position on the monitor to display the
@@ -218,6 +232,16 @@ type
     image*: string
   Color* = object
     r*, g*, b*, a*: int
+  Mode* = enum
+    Notification = "notification",
+    Desktop = "desktop",
+    Dock = "dock",
+    Normal = "window"
+  Edge* = enum
+    Top = "top",
+    Bottom = "bottom",
+    Left = "left",
+    Right = "right"
   Options* = object
     wopt*: string
     hopt*: string
@@ -241,6 +265,9 @@ type
     name*, class*: string
     padding*: int
     timeout*: int
+    icon*: string
+    mode*: Mode
+    edge*: Edge
 
 proc hash*(x: Shortcut): Hash =
   var h: Hash = 0
@@ -282,7 +309,7 @@ template globalOrLocal(global, local, field, action: untyped): untyped =
 
 let parser = peg(input, options: Options):
   input <- option * *("\x1F" * option) * !1
-  option <- help | version | position | size | background | hover | border | borderwidth | text | font | image | monitor | format | name | class | textColor | ninepatch | tile | config | padding | timeout | action | hoverNinepatch | hoverTile | shortcut
+  option <- help | version | position | size | background | hover | border | borderwidth | text | font | image | monitor | format | name | class | textColor | ninepatch | tile | config | padding | timeout | action | hoverNinepatch | hoverTile | shortcut | mode | edge | icon
   help <- "--help":
     echo version & "\n"
     echo doc
@@ -387,6 +414,12 @@ let parser = peg(input, options: Options):
     options.format = $1
   timeout <- "--timeout\x1F" * >positiveNumber:
     options.timeout = parseInt($1)
+  mode <- "--mode\x1F" * >("notification" | "desktop" | "dock" | "window"):
+    options.mode = parseEnum[Mode]($1)
+  edge <- "--edge\x1F" * >("top" | "bottom" | "left" | "right"):
+    options.edge = parseEnum[Edge]($1)
+  icon <- "--icon\x1F" * >string:
+    options.icon = $1
   name <- "--name\x1F" * >string:
     options.name = $1
   class <- "--class\x1F" * >string:

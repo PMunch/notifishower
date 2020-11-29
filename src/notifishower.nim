@@ -3,6 +3,7 @@ import layout, options, ninepatch
 import imlib2
 import times
 import x11 / [x, xlib, xutil, xrandr, xatom]
+import math
 
 converter intToCint(x: int): cint = x.cint
 converter intToCuint(x: int): cuint = x.cuint
@@ -48,7 +49,7 @@ type
   WindowInformation = object
     w, h: int
     updates: ImlibUpdates
-    layout: Pack
+    layout: Layout
     hoverSection: HoverSection
 
 var
@@ -138,7 +139,7 @@ discard XMatchVisualInfo(disp, DefaultScreen(disp), 32, TrueColor, vinfo.addr) =
         XMatchVisualInfo(disp, DefaultScreen(disp), 8, PseudoColor, vinfo.addr) == 1
 
 var wa: XSetWindowAttributes
-wa.overrideRedirect = true
+wa.overrideRedirect = args.mode in {Notification, Desktop}
 wa.backgroundPixmap = None
 wa.backgroundPixel = 0
 wa.borderPixel = ((args.border.a shl 24) or (args.border.r shl 16) or (args.border.g shl 8) or args.border.b).uint
@@ -211,6 +212,10 @@ for name, image in args.images:
   else:
     images[name] = (1, 1)
 
+if args.mode == Normal and args.monitors.len == 0:
+  # TODO: try to pick current monitor
+  screens = screens[0..0]
+
 for screen in screens:
   # TODO: Detect active monitor and allow a follow active mode
   if args.monitors.len == 0 or args.monitors.hasKey(screen.name):
@@ -245,39 +250,63 @@ for screen in screens:
     var layout = parseLayout(args.format, (args.wopt, winWidth), (args.hopt, winHeight), args.padding, texts, images)
     if args.ninepatch.len != 0 and bgNinepatch.tile:
       let
-        cwidth = layout.width.value.int - bgNinepatch.startTileX - bgNinepatch.endTileX
-        cheight = layout.height.value.int - bgNinepatch.startTileY - bgNinepatch.endTileY
+        cwidth = layout.pack.width.value.int - bgNinepatch.startTileX - bgNinepatch.endTileX
+        cheight = layout.pack.height.value.int - bgNinepatch.startTileY - bgNinepatch.endTileY
       var
-        nwidth = layout.width.value.int + (bgNinepatch.tileStepX - (cwidth mod bgNinepatch.tileStepX))
-        nheight = layout.height.value.int + (bgNinepatch.tileStepY - (cheight mod bgNinepatch.tileStepY))
+        nwidth = layout.pack.width.value.int + (bgNinepatch.tileStepX - (cwidth mod bgNinepatch.tileStepX))
+        nheight = layout.pack.height.value.int + (bgNinepatch.tileStepY - (cheight mod bgNinepatch.tileStepY))
       case args.wopt:
-      of "==": nwidth = layout.width.value.int
+      of "==": nwidth = layout.pack.width.value.int
       of "<=": nwidth = min(winWidth, nwidth)
       of ">=": nwidth = max(winWidth, nwidth)
       case args.hopt:
-      of "==": nheight = layout.height.value.int
+      of "==": nheight = layout.pack.height.value.int
       of "<=": nheight = min(winHeight, nheight)
       of ">=": nheight = max(winHeight, nheight)
       layout = parseLayout(args.format, ("==", nwidth), ("==", nheight), args.padding, texts, images)
     let
-      xpos = screen.x + (if xCenterRelative: (screen.w div 2 - borderWidth - (layout.width.value.int div 2) + xinput)
-        else: (if xinput < 0: screen.w - layout.width.value.int - borderWidth*2 + xinput + 1 else: xinput)
+      xpos = screen.x + (if xCenterRelative: (screen.w div 2 - borderWidth - (layout.pack.width.value.int div 2) + xinput)
+        else: (if xinput < 0: screen.w - layout.pack.width.value.int - borderWidth*2 + xinput + 1 else: xinput)
       )
-      ypos = screen.y + (if yCenterRelative: (screen.h div 2 - borderWidth - (layout.height.value.int div 2) + yinput)
-        else: (if yinput < 0: screen.h - layout.height.value.int - borderWidth*2 + yinput + 1 else: yinput)
+      ypos = screen.y + (if yCenterRelative: (screen.h div 2 - borderWidth - (layout.pack.height.value.int div 2) + yinput)
+        else: (if yinput < 0: screen.h - layout.pack.height.value.int - borderWidth*2 + yinput + 1 else: yinput)
       )
-      win = XCreateWindow(disp, DefaultRootWindow(disp), xpos, ypos, layout.width.value.int,
-        layout.height.value.int, borderWidth, vinfo.depth, InputOutput, vinfo.visual,
-        CWOverrideRedirect or CWBackPixmap or CWBackPixel or CWBorderPixel or
+      win = XCreateWindow(disp, DefaultRootWindow(disp), xpos, ypos, layout.pack.width.value.int,
+        layout.pack.height.value.int, borderWidth, vinfo.depth, InputOutput, vinfo.visual,
+        (if args.mode in {Notification, Desktop}: CWOverrideRedirect else: 0).culong or CWBackPixmap or CWBackPixel or CWBorderPixel or
         CWColormap or CWEventMask, wa.addr)
     windows[win] = WindowInformation(
-      w: layout.width.value.int,
-      h: layout.height.value.int,
+      w: layout.pack.width.value.int,
+      h: layout.pack.height.value.int,
       layout: layout
     )
 
+    if args.mode == Dock:
+      echo screen
+      var dockAtom = XInternAtom(disp, "_NET_WM_WINDOW_TYPE_DOCK", true)
+      discard XChangeProperty(disp, win, XInternAtom(disp, "_NET_WM_WINDOW_TYPE", false),
+        XA_ATOM, 32, PropModeReplace, cast[ptr cuchar](dockAtom.addr),
+        1)
+      var partial = [
+        if args.edge == Left: layout.pack.width.value.int else: 0, # left
+        if args.edge == Right: layout.pack.width.value.int else: 0, # right
+        if args.edge == Top: layout.pack.height.value.int else: 0, # top
+        if args.edge == Bottom: layout.pack.height.value.int else: 0, # bottom
+        if args.edge == Left: screen.y else: 0, # leftStartY
+        if args.edge == Left: screen.y + screen.h else: 0, # leftEndY
+        if args.edge == Right: screen.y else: 0, # rightStartY
+        if args.edge == Right: screen.y + screen.h else: 0, # rightEndY
+        if args.edge == Top: screen.x else: 0, # topStartX
+        if args.edge == Top: screen.x + screen.w else: 0, # topEndX
+        if args.edge == Bottom: screen.x else: 0, # bottomStartX
+        if args.edge == Bottom: screen.x + screen.w else: 0 # bottomEndX
+      ]
+      discard XChangeProperty(disp, win, XInternAtom(disp, "_NET_WM_STRUT_PARTIAL", false),
+        XA_CARDINAL, 32, PropModeReplace, cast[ptr cuchar](partial[0].addr),
+        partial.len)
+
     discard XSelectInput(disp, win, KeyPressMask or ButtonPressMask or ButtonReleaseMask or
-                PointerMotionMask or ExposureMask)
+                PointerMotionMask or ExposureMask or FocusChangeMask or StructureNotifyMask)
     discard XMapWindow(disp, win)
 
     # set window title and class
@@ -290,21 +319,67 @@ for screen in screens:
       title.len)
     discard XSetClassHint(disp, win, classhint.addr)
 
+
+    # set the icon
+    if args.icon.len != 0:
+      let icon = imlib_load_image(args.icon)
+      if icon != nil:
+        imlib_context_set_image(icon)
+        let
+          icon_data = cast[ptr UncheckedArray[uint32]](imlib_image_get_data_for_reading_only())
+          width = imlib_image_get_width()
+          height = imlib_image_get_height()
+          elements = width*height + 2
+        var icon_data_x11 = newSeq[uint](elements * sizeof(uint))
+        icon_data_x11[0] = width.uint
+        icon_data_x11[1] = height.uint
+        # Can't simply use memcpy here because the target buffer is
+        # architecture dependent but the imlib buffer is always 32-bit
+        for i in 0..<width*height:
+          icon_data_x11[2+i] = icon_data[i].uint
+        let
+          net_wm_icon = XInternAtom(disp, "_NET_WM_ICON", false)
+          cardinal = XInternAtom(disp, "CARDINAL", false)
+        discard XChangeProperty(disp, win, net_wm_icon, cardinal, 32,
+          PropModeReplace, cast[ptr cuchar](icon_data_x11[0].addr), elements)
+        imlib_free_image()
+
     # set window type
     let net_wm_window_type = XInternAtom(disp, "_NET_WM_WINDOW_TYPE", false)
 
-    var data = [
-      XInternAtom(disp, "_NET_WM_WINDOW_TYPE_NOTIFICATION", false),
-      XInternAtom(disp, "_NET_WM_WINDOW_TYPE_UTILITY", false)
-    ]
-    discard XChangeProperty(disp, win, net_wm_window_type, XA_ATOM, 32,
-      PropModeReplace, cast[ptr cuchar](data.addr), 2)
+    var data = case args.mode:
+      of Notification: @[
+          XInternAtom(disp, "_NET_WM_WINDOW_TYPE_NOTIFICATION", false),
+          XInternAtom(disp, "_NET_WM_WINDOW_TYPE_UTILITY", false)
+        ]
+      of Dock: @[
+          XInternAtom(disp, "_NET_WM_WINDOW_TYPE_DOCK", false)
+        ]
+      of Desktop: @[
+          XInternAtom(disp, "_NET_WM_WINDOW_TYPE_DESKTOP", false)
+        ]
+      of Normal: @[
+          XInternAtom(disp, "_NET_WM_WINDOW_TYPE_NORMAL", false)
+        ]
+
+    if data.len > 0:
+      discard XChangeProperty(disp, win, net_wm_window_type, XA_ATOM, 32,
+        PropModeReplace, cast[ptr cuchar](data[0].addr), data.len)
 
     # set state above
-    let netWmState = XInternAtom(disp, "_NET_WM_STATE", false);
-    data[0] = XInternAtom(disp, "_NET_WM_STATE_ABOVE", false)
+    let netWmState = XInternAtom(disp, "_NET_WM_STATE", false)
+    case args.mode:
+    of Notification, Dock:
+      data[0] = XInternAtom(disp, "_NET_WM_STATE_ABOVE", false)
+    else:
+      data[0] = XInternAtom(disp, "_NET_WM_STATE_BELOW", false)
+
     discard XChangeProperty(disp, win, netWmState, XA_ATOM, 32,
-            PropModeReplace, cast[ptr cuchar](data.addr), 1)
+            PropModeReplace, cast[ptr cuchar](data[0].addr), 1)
+
+    if args.mode == Desktop: discard XLowerWindow(disp, win)
+
+    #discard XReparentWindow(disp, 58720266.Window, win, 100, 0)
 
   for shortcut in args.shortcuts.keys:
     discard XGrabKey(disp, XKeysymToKeycode(disp, shortcut.key).cint, shortcut.mask, DefaultRootWindow(disp),
@@ -353,10 +428,10 @@ template forEachElement(startX, startY: int, elementBody: untyped, stackBody: un
         y -= s.height.value.int
     when declared(drawStack):
       imlib_context_set_image(buffer)
-      let color = window.layout.color
+      let color = window.layout.pack.color
       imlib_context_set_color(color.red.cint, color.green.cint, color.blue.cint, 200)
-      imlib_image_fill_rectangle(x, y, window.layout.width.value.int, window.layout.height.value.int)
-    window.layout.calculateStack(window)
+      imlib_image_fill_rectangle(x, y, window.layout.pack.width.value.int, window.layout.pack.height.value.int)
+    window.layout.pack.calculateStack(window)
 
 proc calculateHoverSection(mx, my: int, window: var WindowInformation) =
   reset window.hoverSection
@@ -382,6 +457,7 @@ proc calculateHoverSection(mx, my: int, window: var WindowInformation) =
 while true:
   if XPending(disp) == 0: # If we don't have any XEvents, make sure we don't wait further than our timeout
     var selector = newSelector[pointer]()
+    # TODO: Implement updateable text
     selector.registerHandle(ConnectionNumber(disp).int, {Read}, nil)
     let timeout = if args.timeout == 0: -1
       else: int((startTime + args.timeout.float - epochTime())*1000.0)
@@ -426,6 +502,7 @@ while true:
       let action = windows[ev.xbutton.window].hoverSection.action
       if action != "":
         # TODO: Implement format string so position of click can be output
+        # TODO: --dontquit
         stdout.write action
         quit 0
     of KeyPress:
@@ -438,6 +515,22 @@ while true:
         if args.hoverables.hasKey(element):
           stdout.write args.hoverables[element].action
           quit 0
+    of FocusIn, FocusOut:
+      if args.mode == Desktop: discard XLowerWindow(disp, ev.xfocus.window)
+    of ConfigureNotify:
+      if ev.xconfigure.width != windows[ev.xconfigure.window].w or
+         ev.xconfigure.height != windows[ev.xconfigure.window].h:
+        var layout = windows[ev.xconfigure.window].layout
+        layout.updateLayout(
+          ("==", ev.xconfigure.width.int),
+          ("==", ev.xconfigure.height.int)
+        )
+        windows[ev.xconfigure.window].w = layout.pack.width.value.round.int
+        windows[ev.xconfigure.window].h = layout.pack.height.value.round.int
+        windows[ev.xconfigure.window].updates = imlib_update_append_rect(
+          windows[ev.xconfigure.window].updates,
+          0, 0,
+          ev.xconfigure.width, ev.xconfigure.height)
     else:
       discard screenCheckEvent(ev.addr)
 
