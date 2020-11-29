@@ -268,6 +268,7 @@ type
     icon*: string
     mode*: Mode
     edge*: Edge
+    quitOnAction*: bool
 
 proc hash*(x: Shortcut): Hash =
   var h: Hash = 0
@@ -309,7 +310,7 @@ template globalOrLocal(global, local, field, action: untyped): untyped =
 
 let parser = peg(input, options: Options):
   input <- option * *("\x1F" * option) * !1
-  option <- help | version | position | size | background | hover | border | borderwidth | text | font | image | monitor | format | name | class | textColor | ninepatch | tile | config | padding | timeout | action | hoverNinepatch | hoverTile | shortcut | mode | edge | icon
+  option <- help | version | position | size | background | hover | border | borderwidth | text | font | image | monitor | format | name | class | textColor | ninepatch | tile | config | padding | timeout | action | hoverNinepatch | hoverTile | shortcut | mode | edge | icon | quitonaction
   help <- "--help":
     echo version & "\n"
     echo doc
@@ -420,6 +421,8 @@ let parser = peg(input, options: Options):
     options.edge = parseEnum[Edge]($1)
   icon <- "--icon\x1F" * >string:
     options.icon = $1
+  quitonaction <- "--" * "quitonaction\x1F" * >boolean:
+    options.quitOnAction = $1 == "true"
   name <- "--name\x1F" * >string:
     options.name = $1
   class <- "--class\x1F" * >string:

@@ -1,4 +1,4 @@
-import os, tables, selectors, macros
+import os, tables, selectors, macros, strutils
 import layout, options, ninepatch
 import imlib2
 import times
@@ -28,6 +28,7 @@ args.text["body"] = Text()
 args.defaultColor = Color(r: 255, g: 255, b: 255, a: 255)
 args.images["icon"] = Image()
 args.padding = 8
+args.quitOnAction = true
 args = parseCommandLine(defaults = args)
 for _, text in args.text.mpairs:
   if text.font.len == 0:
@@ -379,15 +380,14 @@ for screen in screens:
 
     if args.mode == Desktop: discard XLowerWindow(disp, win)
 
-    #discard XReparentWindow(disp, 58720266.Window, win, 100, 0)
+  if args.mode != Normal:
+    for shortcut in args.shortcuts.keys:
+      discard XGrabKey(disp, XKeysymToKeycode(disp, shortcut.key).cint, shortcut.mask, DefaultRootWindow(disp),
+        false, GrabModeAsync, GrabModeAsync);
 
-  for shortcut in args.shortcuts.keys:
-    discard XGrabKey(disp, XKeysymToKeycode(disp, shortcut.key).cint, shortcut.mask, DefaultRootWindow(disp),
-      false, GrabModeAsync, GrabModeAsync);
-
-  if args.defaultShortcut.mask != 0 or args.defaultShortcut.key.int != 0:
-    discard XGrabKey(disp, XKeysymToKeycode(disp, args.defaultShortcut.key).cint, args.defaultShortcut.mask, DefaultRootWindow(disp),
-      false, GrabModeAsync, GrabModeAsync);
+    if args.defaultShortcut.mask != 0 or args.defaultShortcut.key.int != 0:
+      discard XGrabKey(disp, XKeysymToKeycode(disp, args.defaultShortcut.key).cint, args.defaultShortcut.mask, DefaultRootWindow(disp),
+        false, GrabModeAsync, GrabModeAsync);
 
 proc inRect(x, y, rx, ry, rw, rh: int): bool =
   if x >= rx and x < rx + rw and
@@ -454,6 +454,27 @@ proc calculateHoverSection(mx, my: int, window: var WindowInformation) =
   do:
     checkElement(stackName)
 
+template performReplace(event, action, element: untyped): untyped =
+  block:
+    let
+      rootX = ev.event.x
+      rootY = ev.event.y
+    var elementX, elementY, clickX, clickY = 0
+    if windows.hasKey(ev.event.window):
+      elementX = windows[ev.event.window].hoverSection.x
+      elementY = windows[ev.event.window].hoverSection.y
+      clickX = rootX - elementX
+      clickY = rootY - elementY
+    var replaced = action.multiReplace(
+        ("{clickX}", $clickX), ("{clickY}", $clickY),
+        ("{elementX}", $elementX), ("{elementY}", $elementY),
+        ("{rootX}", $rootX), ("{rootY}", $rootY), ("{trigger}", "click"))
+    if args.text.hasKey(element):
+      replaced = replaced.replace("{value}", args.text[element].text)
+    if args.images.hasKey(element):
+      replaced = replaced.replace("{value}", args.images[element].image)
+    replaced
+
 while true:
   if XPending(disp) == 0: # If we don't have any XEvents, make sure we don't wait further than our timeout
     var selector = newSelector[pointer]()
@@ -501,20 +522,22 @@ while true:
     of ButtonRelease:
       let action = windows[ev.xbutton.window].hoverSection.action
       if action != "":
-        # TODO: Implement format string so position of click can be output
-        # TODO: --dontquit
-        stdout.write action
-        quit 0
+        let element = windows[ev.xbutton.window].hoverSection.element
+        stdout.writeLine performReplace(xbutton, action, element)
+        if args.quitOnAction:
+          quit 0
     of KeyPress:
       let shortcut = Shortcut(mask: ev.xkey.state, key: XLookupKeysym(ev.xkey.addr, 0))
       if args.defaultShortcut == shortcut and args.defaultAction.len != 0:
-        stdout.write args.defaultAction
-        quit 0
+        stdout.writeLine performReplace(xkey, args.defaultAction, "")
+        if args.quitOnAction:
+          quit 0
       if args.shortcuts.hasKey(shortcut):
         let element = args.shortcuts[shortcut]
         if args.hoverables.hasKey(element):
-          stdout.write args.hoverables[element].action
-          quit 0
+          stdout.writeLine performReplace(xkey, args.hoverables[element].action, element)
+          if args.quitOnAction:
+            quit 0
     of FocusIn, FocusOut:
       if args.mode == Desktop: discard XLowerWindow(disp, ev.xfocus.window)
     of ConfigureNotify:
