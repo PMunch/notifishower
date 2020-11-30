@@ -49,6 +49,7 @@ type
     color: Color
   WindowInformation = object
     w, h: int
+    screen: Screen
     updates: ImlibUpdates
     layout: Layout
     hoverSection: HoverSection
@@ -213,6 +214,64 @@ for name, image in args.images:
   else:
     images[name] = (1, 1)
 
+proc calculateDimensions(screen: Screen): tuple[layout: Layout, x, y, w, h: int] =
+  let
+    borderWidth = args.borderWidth
+    xinput =
+      if args.monitors.hasKey(screen.name) and args.monitors[screen.name].x != int.high:
+        args.monitors[screen.name].x
+      else: args.x
+    yinput =
+      if args.monitors.hasKey(screen.name) and args.monitors[screen.name].y != int.high:
+        args.monitors[screen.name].y
+      else: args.y
+    width =
+      if args.monitors.hasKey(screen.name) and args.monitors[screen.name].w != int.high:
+        args.monitors[screen.name].w
+      else: args.w
+    height =
+      if args.monitors.hasKey(screen.name) and args.monitors[screen.name].h != int.high:
+        args.monitors[screen.name].h
+      else: args.h
+    xCenterRelative =
+      if args.monitors.hasKey(screen.name) and args.monitors[screen.name].xCenterRelative:
+        true
+      else: args.xCenterRelative
+    yCenterRelative =
+      if args.monitors.hasKey(screen.name) and args.monitors[screen.name].yCenterRelative:
+        true
+      else: args.yCenterRelative
+    winWidth = if width < 0: screen.w + width else: width
+    winHeight = if height < 0: screen.h + height else: height
+  var layout = parseLayout(args.format, (args.wopt, winWidth), (args.hopt, winHeight), args.padding, texts, images)
+  if args.ninepatch.len != 0 and bgNinepatch.tile:
+    let
+      cwidth = layout.pack.width.value.int - bgNinepatch.startTileX - bgNinepatch.endTileX
+      cheight = layout.pack.height.value.int - bgNinepatch.startTileY - bgNinepatch.endTileY
+    var
+      nwidth = layout.pack.width.value.int + (bgNinepatch.tileStepX - (cwidth mod bgNinepatch.tileStepX))
+      nheight = layout.pack.height.value.int + (bgNinepatch.tileStepY - (cheight mod bgNinepatch.tileStepY))
+    case args.wopt:
+    of "==": nwidth = layout.pack.width.value.int
+    of "<=": nwidth = min(winWidth, nwidth)
+    of ">=": nwidth = max(winWidth, nwidth)
+    case args.hopt:
+    of "==": nheight = layout.pack.height.value.int
+    of "<=": nheight = min(winHeight, nheight)
+    of ">=": nheight = max(winHeight, nheight)
+    layout.updateLayout(
+      ("==", nwidth),
+      ("==", nheight)
+    )
+  let
+    xpos = screen.x + (if xCenterRelative: (screen.w div 2 - borderWidth - (layout.pack.width.value.int div 2) + xinput)
+      else: (if xinput < 0: screen.w - layout.pack.width.value.int - borderWidth*2 + xinput + 1 else: xinput)
+    )
+    ypos = screen.y + (if yCenterRelative: (screen.h div 2 - borderWidth - (layout.pack.height.value.int div 2) + yinput)
+      else: (if yinput < 0: screen.h - layout.pack.height.value.int - borderWidth*2 + yinput + 1 else: yinput)
+    )
+  return (layout, xpos, ypos, layout.pack.width.value.round.int, layout.pack.height.value.round.int)
+
 if args.mode == Normal and args.monitors.len == 0:
   # TODO: try to pick current monitor
   screens = screens[0..0]
@@ -221,78 +280,28 @@ for screen in screens:
   # TODO: Detect active monitor and allow a follow active mode
   if args.monitors.len == 0 or args.monitors.hasKey(screen.name):
     let
-      borderWidth = args.borderWidth
-      xinput =
-        if args.monitors.hasKey(screen.name) and args.monitors[screen.name].x != int.high:
-          args.monitors[screen.name].x
-        else: args.x
-      yinput =
-        if args.monitors.hasKey(screen.name) and args.monitors[screen.name].y != int.high:
-          args.monitors[screen.name].y
-        else: args.y
-      width =
-        if args.monitors.hasKey(screen.name) and args.monitors[screen.name].w != int.high:
-          args.monitors[screen.name].w
-        else: args.w
-      height =
-        if args.monitors.hasKey(screen.name) and args.monitors[screen.name].h != int.high:
-          args.monitors[screen.name].h
-        else: args.h
-      xCenterRelative =
-        if args.monitors.hasKey(screen.name) and args.monitors[screen.name].xCenterRelative:
-          true
-        else: args.xCenterRelative
-      yCenterRelative =
-        if args.monitors.hasKey(screen.name) and args.monitors[screen.name].yCenterRelative:
-          true
-        else: args.yCenterRelative
-      winWidth = if width < 0: screen.w + width else: width
-      winHeight = if height < 0: screen.h + height else: height
-    var layout = parseLayout(args.format, (args.wopt, winWidth), (args.hopt, winHeight), args.padding, texts, images)
-    if args.ninepatch.len != 0 and bgNinepatch.tile:
-      let
-        cwidth = layout.pack.width.value.int - bgNinepatch.startTileX - bgNinepatch.endTileX
-        cheight = layout.pack.height.value.int - bgNinepatch.startTileY - bgNinepatch.endTileY
-      var
-        nwidth = layout.pack.width.value.int + (bgNinepatch.tileStepX - (cwidth mod bgNinepatch.tileStepX))
-        nheight = layout.pack.height.value.int + (bgNinepatch.tileStepY - (cheight mod bgNinepatch.tileStepY))
-      case args.wopt:
-      of "==": nwidth = layout.pack.width.value.int
-      of "<=": nwidth = min(winWidth, nwidth)
-      of ">=": nwidth = max(winWidth, nwidth)
-      case args.hopt:
-      of "==": nheight = layout.pack.height.value.int
-      of "<=": nheight = min(winHeight, nheight)
-      of ">=": nheight = max(winHeight, nheight)
-      layout = parseLayout(args.format, ("==", nwidth), ("==", nheight), args.padding, texts, images)
-    let
-      xpos = screen.x + (if xCenterRelative: (screen.w div 2 - borderWidth - (layout.pack.width.value.int div 2) + xinput)
-        else: (if xinput < 0: screen.w - layout.pack.width.value.int - borderWidth*2 + xinput + 1 else: xinput)
-      )
-      ypos = screen.y + (if yCenterRelative: (screen.h div 2 - borderWidth - (layout.pack.height.value.int div 2) + yinput)
-        else: (if yinput < 0: screen.h - layout.pack.height.value.int - borderWidth*2 + yinput + 1 else: yinput)
-      )
-      win = XCreateWindow(disp, DefaultRootWindow(disp), xpos, ypos, layout.pack.width.value.int,
-        layout.pack.height.value.int, borderWidth, vinfo.depth, InputOutput, vinfo.visual,
+      dimensions = calculateDimensions(screen)
+      win = XCreateWindow(disp, DefaultRootWindow(disp), dimensions.x, dimensions.y, dimensions.w,
+        dimensions.h, args.borderWidth, vinfo.depth, InputOutput, vinfo.visual,
         (if args.mode in {Notification, Desktop}: CWOverrideRedirect else: 0).culong or CWBackPixmap or CWBackPixel or CWBorderPixel or
         CWColormap or CWEventMask, wa.addr)
     windows[win] = WindowInformation(
-      w: layout.pack.width.value.int,
-      h: layout.pack.height.value.int,
-      layout: layout
+      w: dimensions.w,
+      h: dimensions.h,
+      screen: screen,
+      layout: dimensions.layout
     )
 
     if args.mode == Dock:
-      echo screen
       var dockAtom = XInternAtom(disp, "_NET_WM_WINDOW_TYPE_DOCK", true)
       discard XChangeProperty(disp, win, XInternAtom(disp, "_NET_WM_WINDOW_TYPE", false),
         XA_ATOM, 32, PropModeReplace, cast[ptr cuchar](dockAtom.addr),
         1)
       var partial = [
-        if args.edge == Left: layout.pack.width.value.int else: 0, # left
-        if args.edge == Right: layout.pack.width.value.int else: 0, # right
-        if args.edge == Top: layout.pack.height.value.int else: 0, # top
-        if args.edge == Bottom: layout.pack.height.value.int else: 0, # bottom
+        if args.edge == Left: dimensions.w else: 0, # left
+        if args.edge == Right: dimensions.w else: 0, # right
+        if args.edge == Top: dimensions.h else: 0, # top
+        if args.edge == Bottom: dimensions.h else: 0, # bottom
         if args.edge == Left: screen.y else: 0, # leftStartY
         if args.edge == Left: screen.y + screen.h else: 0, # leftEndY
         if args.edge == Right: screen.y else: 0, # rightStartY
@@ -475,17 +484,74 @@ template performReplace(event, action, element: untyped): untyped =
       replaced = replaced.replace("{value}", args.images[element].image)
     replaced
 
+var selector = newSelector[pointer]()
+selector.registerHandle(ConnectionNumber(disp).int, {Read}, nil)
+var pipes: Table[int, tuple[element: string, file: File]]
+for key, text in args.text:
+  if text.pipe.len != 0:
+    let pipe = open(text.pipe)
+    selector.registerHandle(pipe.getFileHandle.int, {Read}, nil)
+    pipes[pipe.getFileHandle.int] = (key, pipe)
+
+for key, image in args.images:
+  if image.pipe.len != 0:
+    let pipe = open(image.pipe)
+    selector.registerHandle(pipe.getFileHandle.int, {Read}, nil)
+    pipes[pipe.getFileHandle.int] = (key, pipe)
+
 while true:
   if XPending(disp) == 0: # If we don't have any XEvents, make sure we don't wait further than our timeout
-    var selector = newSelector[pointer]()
-    # TODO: Implement updateable text
-    selector.registerHandle(ConnectionNumber(disp).int, {Read}, nil)
     let timeout = if args.timeout == 0: -1
       else: int((startTime + args.timeout.float - epochTime())*1000.0)
-    discard selector.select(timeout)
-    selector.close
+    var events = selector.select(timeout)
+    for event in events:
+      if pipes.hasKey(event.fd):
+        let pipe = pipes[event.fd]
+        try:
+          if args.text.hasKey(pipe.element):
+            args.text[pipe.element].text = pipe.file.readLine
+            let
+              text = args.text[pipe.element]
+              loadedFont = imlib_load_font(text.font)
+            texts[pipe.element] = (1, 1)
+            imlib_context_set_font(loadedFont)
+            if text.text.len > 0:
+              imlib_get_text_size(text.text[0].unsafeAddr, texts[pipe.element].w.addr, texts[pipe.element].h.addr)
+            imlib_free_font()
+          elif args.images.hasKey(pipe.element):
+            args.images[pipe.element].image = pipe.file.readLine
+            let image = args.images[pipe.element]
+            if image.image.len > 0:
+              var image = imlib_load_image(image.image)
+              if image == nil:
+                args.images[pipe.element].image = ""
+                images[pipe.element] = (1, 1)
+              else:
+                imlib_context_set_image(image)
+                images[pipe.element] = (imlib_image_get_width().int, imlib_image_get_height().int)
+                imlib_free_image()
+            else:
+              images[pipe.element] = (1, 1)
+          for win, winInfo in windows.mpairs:
+            let dimensions = calculateDimensions(winInfo.screen)
+            if winInfo.w == dimensions.w and winInfo.h == dimensions.h:
+              # This will happen anyways if the window resizes
+              winInfo.updates = imlib_update_append_rect(
+                winInfo.updates, 0, 0, dimensions.w, dimensions.h)
+            winInfo.w = dimensions.w
+            winInfo.h = dimensions.h
+            winInfo.layout = dimensions.layout
+            if args.mode != Normal:
+              discard XMoveResizeWindow(disp, win, dimensions.x, dimensions.y, dimensions.w, dimensions.h)
+            else:
+              discard XResizeWindow(disp, win, dimensions.w, dimensions.h)
+        except EOFError:
+          selector.unregister(event.fd)
+          pipe.file.close()
+          pipes.del(event.fd)
   if args.timeout != 0 and startTime + args.timeout.float <= epochTime():
     quit 0
+
   while XPending(disp) > 0:
     discard XNextEvent(disp, ev.addr)
     case ev.tHeType:

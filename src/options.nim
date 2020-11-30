@@ -228,8 +228,10 @@ type
     text*: string
     font*: string
     color*: Color
+    pipe*: string
   Image* = object
     image*: string
+    pipe*: string
   Color* = object
     r*, g*, b*, a*: int
   Mode* = enum
@@ -310,7 +312,7 @@ template globalOrLocal(global, local, field, action: untyped): untyped =
 
 let parser = peg(input, options: Options):
   input <- option * *("\x1F" * option) * !1
-  option <- help | version | position | size | background | hover | border | borderwidth | text | font | image | monitor | format | name | class | textColor | ninepatch | tile | config | padding | timeout | action | hoverNinepatch | hoverTile | shortcut | mode | edge | icon | quitonaction
+  option <- help | version | position | size | background | hover | border | borderwidth | text | font | image | monitor | format | name | class | textColor | ninepatch | tile | config | padding | timeout | action | hoverNinepatch | hoverTile | shortcut | mode | edge | icon | quitonaction | textPipe | imagePipe
   help <- "--help":
     echo version & "\n"
     echo doc
@@ -396,6 +398,8 @@ let parser = peg(input, options: Options):
       echo "An image with the given name already exists"
       quit 1
     options.text.mgetOrPut($1, Text()).text = $2
+  textPipe <- "--" * >identifier * ".text.pipe\x1F" * >string:
+    options.text.mgetOrPut($1, Text()).pipe = $2
   textColor <- "--" * ?(>identifier * ".") * "color\x1F" * >color:
     if capture.len == 2: options.defaultColor = parseColor($1)
     else: options.text.mgetOrPut($1, Text()).color = parseColor($2)
@@ -405,6 +409,8 @@ let parser = peg(input, options: Options):
       echo "A text with the given name already exists"
       quit 1
     options.images.mgetOrPut($1, Image()).image = $2
+  imagePipe <- "--" * >identifier * ".image.pipe\x1F" * >string:
+    options.images.mgetOrPut($1, Image()).pipe = $2
   font <- "--" * ?(>identifier * '.') * "font\x1F" * >fontidentifier:
     if capture.len == 2: options.defaultFont = $1
     else: options.text.mgetOrPut($1, Text()).font = $2

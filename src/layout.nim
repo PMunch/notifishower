@@ -352,7 +352,13 @@ proc updateLayout*(l: Layout, w, h: tuple[opt: string, val: int]) =
     l.s.addConstraint l.width
     l.s.addConstraint l.height
   except ValueError:
-    echo red("Unable to fit pattern into given width/height (", w.opt, w.val, ", ", h.opt, h.val, ")")
-    echo red l.pack.toFormatLanguage()
-    quit 1
+    l.width = l.pack.width >= 0
+    l.height = l.pack.height >= 0
+    l.s.addConstraint l.width
+    l.s.addConstraint l.height
+    #l.s.addConstraint oldW
+    #l.s.addConstraint oldH
+    #echo red("Unable to fit pattern into given width/height (", w.opt, w.val, ", ", h.opt, h.val, ")")
+    #echo red l.pack.toFormatLanguage()
+    #quit 1
   l.s.updateVariables()
