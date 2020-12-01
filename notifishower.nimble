@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.6.0"
+version       = "0.7.0"
 author        = "PMunch"
 description   = "Simple program to show notifications with images and actions around the screen"
 license       = "MIT"

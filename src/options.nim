@@ -32,14 +32,17 @@ Options:
   --border.width <bw>                       Set the width of the border [default: 2]
   --font <font>                             Sets the default font for all text elements
   --action <action>                         Assign an action to clicks outside any element
+  --quitonaction                            Wheter or not to quit when an action is taken [default: true]
   --ninepatch <path>                        Set the background to a ninepatch image
   --tile <bool>                             Set the ninepatch to tiling mode or not
   --shortcut <shortcut>                     Sets a keyboard shortcut for the default action
   --<id>.text <text>                        Store a text element with a given ID
+  --<id>.text.pipe <path>                   A file or fifo which will be used for text input
   --<id>.font <font>                        Set the font for a text element
   --<id>.color <color>                      Set the color for a text element
   --<id>.background <color>                 Set the background color for an element
   --<id>.image <path>                       Store an image element with a given ID
+  --<id>.image.pipe <path>                  A file or fifo which will be used for image input
   --<id>.ninepatch <path>                   Set the background of an element to a ninepatch
   --<id>.tile <bool>                        Set the tiling mode of the background ninepatch
   --<id>.action <action>                    Assign an action to an element
@@ -57,11 +60,18 @@ Mode:
   customisability quickly led it to be useful for other things. With the mode
   switch you are able to tell notifishower to display in different modes. The
   mode can be one of "notification", "desktop", "window", or "dock".
-  Notification is the default, and will show a borderless window that
-  draws on top of everything else. Desktop does the same, but draws underneath
-  all other windows, effectively acting as a desktop widget. Window is a
-  typical window, and is under full control of the WM. And finally dock will
-  request an edge of the monitor where windows don't show and display there.
+  Notification is the default, and will show a borderless window that draws on
+  top of everything else. Desktop does the same, but draws underneath all other
+  windows, effectively acting as a desktop widget. Window is a typical window,
+  and is under full control of the WM. And finally dock will request an edge of
+  the monitor where windows don't show and display there.
+
+Piping input:
+  With the pipe variants of text and images you can update the content of fields
+  passed to the notification. Particularily useful for docks or desktop widgets.
+  The input is polled by select and each line read and used as the input.
+  Because of this it is a good idea to make a FIFO instead of passing a file so
+  that the contents won't accumulate.
 
 Positions and widths:
   X and Y positions can be the position on the monitor to display the
@@ -146,13 +156,19 @@ Layout format:
 Clickable elements:
   Elements can be made clickable by assigning them an action. This is done by
   passing --<id>.action. When an element that has an action is clicked it will
-  write the action to stdout and close the notification. When an element that
-  has an action is hovered by the mouse it will paint a rectangle underneath
-  itself in either the default hover color or the color defined with
-  --<id>.hover. If you want to add a ninepatch image instead as the hover
-  background you can use --<id>.hover.ninepatch and --<id>.hover.tile to
-  specify the image and the tiling mode. If a group is named that entire group
-  can also be made clickable in the same way as elements.
+  write the action to stdout and close the notification (unless --quitonaction
+  is set to false). When an element that has an action is hovered by the mouse
+  it will paint a rectangle underneath itself in either the default hover color
+  or the color defined with --<id>.hover. If you want to add a ninepatch image
+  instead as the hover background you can use --<id>.hover.ninepatch and
+  --<id>.hover.tile to specify the image and the tiling mode. If a group is
+  named that entire group can also be made clickable in the same way as
+  elements. The action can also include a certain set of format strings,
+  {clickX} and {clickY} which is the position of the click relative to the
+  element, {elementX} and {elementY} which is the position of the element within
+  the root window, {rootX} and {rootY} which is the position of the click within
+  the root window, {trigger} which is either click or keyboard, and {value}
+  which is the current text or image that was clicked.
 
 Shortcuts:
   Elements with an action can also be assigned a shortcut. You can pass
