@@ -327,7 +327,7 @@ template globalOrLocal(global, local, field, action: untyped): untyped =
     options.local.mgetOrDefault($1).field = action
 
 let parser = peg(input, options: Options):
-  input <- option * *("\x1F" * option) * !1
+  input <- option * *(separator * option) * !1
   option <- help | version | position | size | background | hover | border | borderwidth | text | font | image | monitor | format | name | class | textColor | ninepatch | tile | config | padding | timeout | action | hoverNinepatch | hoverTile | shortcut | mode | edge | icon | quitonaction | textPipe | imagePipe
   help <- "--help":
     echo version & "\n"
@@ -336,7 +336,7 @@ let parser = peg(input, options: Options):
   version <- ("--version" | "-v"):
     echo version
     quit 0
-  monitor <- "--monitor\x1F" * >xrandrident * ?("\x1F" * >(?("center+" | "center")) * >number * >',' * ?'\x1F' * >(?("center+" | "center")) * >number) * ?("\x1F" * >number * >':' * ?'\x1F' * >number):
+  monitor <- "--monitor" * separator * >xrandrident * ?(separator * >(?("center+" | "center")) * >number * >',' * ?separator * >(?("center+" | "center")) * >number) * ?(separator * >number * >':' * ?separator * >number):
     var monitor = Monitor(x: int.high, y: int.high, w: int.high, h: int.high)
     if capture.len == 7:
       monitorSetValues(2)
@@ -344,7 +344,7 @@ let parser = peg(input, options: Options):
       monitorSetValues(2)
       monitorSetValues(7)
     options.monitors[$1] = monitor
-  position <- "-" * >("x" | "y") * "\x1F" * ?(>("center+" | "center")) * >number:
+  position <- "-" * >("x" | "y") * separator * ?(>("center+" | "center")) * >number:
     let value = parseInt(if capture.len == 4: $3 else: $2)
     case $1:
     of "x":
@@ -355,7 +355,7 @@ let parser = peg(input, options: Options):
       if capture.len == 4:
         options.yCenterRelative = true
       options.y = value
-  size <- "-" * >("w" | "h") * "\x1F" * >?comparator * >number:
+  size <- "-" * >("w" | "h") * separator * >?comparator * >number:
     case $1:
     of "w":
       options.w = parseInt($3)
@@ -363,27 +363,27 @@ let parser = peg(input, options: Options):
     of "h":
       options.h = parseInt($3)
       options.hopt = $2
-  padding <- "--padding" * "\x1F" * >positiveNumber:
+  padding <- "--padding" * separator * >positiveNumber:
     options.padding = parseInt($1)
-  ninepatch <- "--" * ?(>identifier * '.') * "ninepatch\x1F" * >string:
+  ninepatch <- "--" * ?(>identifier * '.') * "ninepatch" * separator * >string:
     if capture.len == 2: options.ninepatch = $1
     else: options.backgrounds.mgetOrPut($1, Background()).ninepatch = $2
     #globalOrLocal(ninepatch, backgrounds, ninepatch, value)
-  config <- "--config\x1F" * >string:
+  config <- "--config" * separator * >string:
     options = parseCommandFile($1, options)
-  tile <- "--" * ?(>identifier * '.') * "tile\x1F" * >boolean:
+  tile <- "--" * ?(>identifier * '.') * "tile" * separator * >boolean:
     globalOrLocal(ninepatchTile, backgrounds, ninepatchTile, value == "true")
     #if capture.len == 2: options.ninepatchTile = $1 == "true"
     #else: options.backgrounds.mgetOrPut($1, Background()).ninepatchTile = $2 == "true"
-  background <- "--" * ?(>identifier * '.') * "background\x1F" * >color:
+  background <- "--" * ?(>identifier * '.') * "background" * separator * >color:
     if capture.len == 2: options.background = parseColor($1)
     else: options.backgrounds.mgetOrPut($1, Background()).background = parseColor($2)
-  hover <- "--" * ?(>identifier * '.') * "hover\x1F" * >color:
+  hover <- "--" * ?(>identifier * '.') * "hover" * separator * >color:
     if capture.len == 2: options.hover = parseColor($1)
     else: options.hoverables.mgetOrPut($1, Hover()).color = parseColor($2)
-  hoverNinepatch <- "--" * >identifier * ".hover.ninepatch\x1F" * >string:
+  hoverNinepatch <- "--" * >identifier * ".hover.ninepatch" * separator * >string:
     options.hoverables.mgetOrPut($1, Hover()).ninepatch = $2
-  shortcut <- "--" * ?(>identifier * '.') * "shortcut\x1F" * >shortcutPattern:
+  shortcut <- "--" * ?(>identifier * '.') * "shortcut" * separator * >shortcutPattern:
     var shortcut: Shortcut
     let
       shortcutPattern = if capture.len == 2: $1 else: $2
@@ -402,59 +402,60 @@ let parser = peg(input, options: Options):
         else: 0)
     if capture.len == 2: options.defaultShortcut = shortcut
     else: options.shortcuts[shortcut] = $1
-  hoverTile <- "--" * >identifier * ".hover.tile\x1F" * >boolean:
+  hoverTile <- "--" * >identifier * ".hover.tile" * separator * >boolean:
     options.hoverables.mgetOrPut($1, Hover()).ninepatchTile = $2 == "true"
-  border <- "--border\x1F" * >color:
+  border <- "--border" * separator * >color:
     options.border = parseColor($1)
-  borderwidth <- "--border.width\x1F" * >positiveNumber:
+  borderwidth <- "--border.width" * separator * >positiveNumber:
     options.borderWidth = parseInt($1)
-  text <- "--" * >identifier * ".text\x1F" * >string:
+  text <- "--" * >identifier * ".text" * separator * >string:
     if options.images.hasKey($1):
       echo "Error with --" & $1 & ".text " & $2
       echo "An image with the given name already exists"
       quit 1
     options.text.mgetOrPut($1, Text()).text = $2
-  textPipe <- "--" * >identifier * ".text.pipe\x1F" * >string:
+  textPipe <- "--" * >identifier * ".text.pipe" * separator * >string:
     options.text.mgetOrPut($1, Text()).pipe = $2
-  textColor <- "--" * ?(>identifier * ".") * "color\x1F" * >color:
+  textColor <- "--" * ?(>identifier * ".") * "color" * separator * >color:
     if capture.len == 2: options.defaultColor = parseColor($1)
     else: options.text.mgetOrPut($1, Text()).color = parseColor($2)
-  image <- "--" * >identifier * ".image\x1F" * >string:
+  image <- "--" * >identifier * ".image" * separator * >string:
     if options.text.hasKey($1):
       echo "Error with --" & $1 & ".image " & $2
       echo "A text with the given name already exists"
       quit 1
     options.images.mgetOrPut($1, Image()).image = $2
-  imagePipe <- "--" * >identifier * ".image.pipe\x1F" * >string:
+  imagePipe <- "--" * >identifier * ".image.pipe" * separator * >string:
     options.images.mgetOrPut($1, Image()).pipe = $2
-  font <- "--" * ?(>identifier * '.') * "font\x1F" * >fontidentifier:
+  font <- "--" * ?(>identifier * '.') * "font" * separator * >fontidentifier:
     if capture.len == 2: options.defaultFont = $1
     else: options.text.mgetOrPut($1, Text()).font = $2
-  action <- "--" * ?(>identifier * ".") * "action\x1F" * >string:
+  action <- "--" * ?(>identifier * ".") * "action" * separator * >string:
     if capture.len == 2: options.defaultAction = $1
     else: options.hoverables.mgetOrPut($1, Hover()).action = $2
-  format <- "--format\x1F" * >string:
+  format <- "--format" * separator * >string:
     options.format = $1
-  timeout <- "--timeout\x1F" * >positiveNumber:
+  timeout <- "--timeout" * separator * >positiveNumber:
     options.timeout = parseInt($1)
-  mode <- "--mode\x1F" * >("notification" | "desktop" | "dock" | "window"):
+  mode <- "--mode" * separator * >("notification" | "desktop" | "dock" | "window"):
     options.mode = parseEnum[Mode]($1)
-  edge <- "--edge\x1F" * >("top" | "bottom" | "left" | "right"):
+  edge <- "--edge" * separator * >("top" | "bottom" | "left" | "right"):
     options.edge = parseEnum[Edge]($1)
-  icon <- "--icon\x1F" * >string:
+  icon <- "--icon" * separator * >string:
     options.icon = $1
-  quitonaction <- "--" * "quitonaction\x1F" * >boolean:
+  quitonaction <- "--" * "quitonaction" * separator * >boolean:
     options.quitOnAction = $1 == "true"
-  name <- "--name\x1F" * >string:
+  name <- "--name" * separator * >string:
     options.name = $1
-  class <- "--class\x1F" * >string:
+  class <- "--class" * separator * >string:
     options.class = $1
   comparator <- ">=" | "<="
   number <- (?'-' * {'1'..'9'} * *Digit) | '0'
   positiveNumber <- ({'1'..'9'} * *Digit) | '0'
   identifier <- Alpha * *(Alnum | '_')
   #string <- *({'\0'..'\x1E'} | {'\x20'..'\xFF'})
-  string <- *(1-'\x1F')
+  separator <- '\x1f'
+  string <- *(1-separator)
   boolean <- "true" | "false"
   modifiers <- "ctrl" | "shift" | "lock" | "mod1" | "mod2" | "mod3" | "mod4" | "mod5"
   shortcutPattern <- *(modifiers * '+') * string
@@ -463,7 +464,7 @@ let parser = peg(input, options: Options):
   #StrChar <- {'\t', ' ', '!', 0x23..0x7E}
   xrandrident <- +Print #UnquotStrChar
   color <- ?'#' * (Xdigit[8] | Xdigit[6])
-  fontidentifier <- +nonslash * +(('/' * positiveNumber * &('\x1F' | !1)) | ('/' * +nonslash * &1 * &(!'\x1F')))
+  fontidentifier <- +nonslash * +(('/' * positiveNumber * &(separator | !1)) | ('/' * +nonslash * &1 * &(!separator)))
   nonslash <- {0x20..0x2E, 0x30..0x7E}
 
 proc parseCommandLine*(defaults: var Options = default(Options), opts = commandLineParams()): Options =
